@@ -71,6 +71,7 @@ endif()
 message(STATUS "P4 build identity: ${PET_P4_BUILD_ID}, protocol schema ${PET_P4_PROTOCOL_SCHEMA}, UART ${PET_P4_UART_BAUD}")
 project(pet_manager_p4_runtime)
 
+include("${CMAKE_CURRENT_LIST_DIR}/tools/jpeg_v1_security.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/tools/h264_pre_v3.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/tools/h264_simd.cmake")
 
