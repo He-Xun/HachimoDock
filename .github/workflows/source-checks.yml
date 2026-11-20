@@ -41,7 +41,15 @@ jobs:
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (!$vs) { throw 'Visual C++ x64 toolchain unavailable' }
           $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
-          cmd.exe /d /s /c ('""{0}" && node pc/scripts/build-windows-acl.mjs"' -f $vcvars)
+          $batch = Join-Path $env:RUNNER_TEMP 'build-hachimi-windows-acl.cmd'
+          @"
+          @echo off
+          call "$vcvars"
+          if errorlevel 1 exit /b 1
+          node pc/scripts/build-windows-acl.mjs
+          exit /b %errorlevel%
+          "@ | Set-Content -Encoding ascii $batch
+          & $batch
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $helper = 'pc/src-tauri/generated-runtime/windows-acl.exe'
           New-Item -ItemType Directory -Path 'pc/src-tauri/dsh-bridge' -Force | Out-Null
