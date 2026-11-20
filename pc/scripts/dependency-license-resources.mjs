@@ -1,7 +1,7 @@
 // Exact public license/notice resources shared by Windows installer staging.
 // No dependency installation, executable invocation or user settings access.
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const dependencyLicenseResources = Object.freeze([
@@ -15,9 +15,9 @@ export const dependencyLicenseResources = Object.freeze([
   ['serialport-4.9.0-LICENSE-NOTICE.txt', '00a4d69750686b8fcd2369b17176b4389d67f275fd22b9eab6c66155b72bd4d2'],
   ['MPL-2.0.txt', '3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04'],
   ['DEPENDENCY-LICENSE-NOTICE.md', '357b4e159c983730eb6fda2b312226f52b511793a223189c8e991f79396c6782'],
-  ['Node-26.7.0-LICENSE.txt', 'e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49'],
+  ['Node-26.13.1-LICENSE.txt', '8e603aa87c70d36e497004f0dec63111511cb61b7d65ace12e10ea791599286c'],
   ['DESKTOP-RUNTIME-LICENSES.txt', '96112f163a22976dc821c7328b01582c74870003921c251615c67dd643971662'],
-  ['DESKTOP-RUNTIME-DEPENDENCIES.json', '91d5fbc72cb828f46e13064800cd75203466f61e338f21ceafcea02fff99ab66'],
+  ['DESKTOP-RUNTIME-DEPENDENCIES.json', '43d27ce211994d98005c801e9ec8a5f9b1a76dd85febdfe4441bdd5b853d9662'],
 ].map(([name, sha256]) => Object.freeze({ name, sha256 })));
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -56,22 +56,46 @@ export function copyDependencyLicenses(sourceDirectory, destinationDirectory) {
   return receipt;
 }
 
-// Reviewed Node26.7.0 inputs; a new vendor build needs an explicit license review.
-const node267Builds = new Set(["913b144fdb40638b1acef7974ab3c33fbd527cc0974cb5da467ab1e6ac51b4d4", "abdc47a6bc8b45e6272d62d4c5c0c0419fb5dbedf3fe12ddabb595634f06f81f", "e921fe5307e29bf6fd00000dd594356affd3a7b044e52720c7f10decbdc305b9"]);
-export function copyNodeRuntimeLicense(binaryPath, sourceDirectory, destinationDirectory) {
+// SHA-256 of the executable in each official Node.js v26.13.1 distribution.
+const reviewedNodeBinaries = new Set([
+  '266dec4dce3a6cdcf5cdc38722a00cf5ae6a12cc51068d2a227655bbb75751ec', // darwin-arm64
+  'e85cb6dd5f916a2aa0d05a5874dcf7c69b1ebd7a5347d7ff912bb4d9339f5e23', // darwin-x64
+  'f5109dc868ec38703ad8f305e0aceece717cb60d4889873f434017af4e96cccb', // win-x64
+]);
+
+export function verifyNodeRuntime(binaryPath) {
   const st = lstatSync(binaryPath);
-  if (!st.isFile() || st.isSymbolicLink() || !node267Builds.has(digest(readFileSync(binaryPath)))) {
-    throw new Error('Node vendor build has no reviewed matching license carrier');
+  if (!st.isFile() || !reviewedNodeBinaries.has(digest(readFileSync(binaryPath)))) {
+    throw new Error('Node vendor build has no reviewed matching license carrier. Use the official Node.js 26.13.1 binary.');
   }
+}
+
+export function copyNodeRuntimeLicense(binaryPath, sourceDirectory, destinationDirectory) {
+  verifyNodeRuntime(binaryPath);
   directory(sourceDirectory);
-  const raw = verified(join(sourceDirectory, 'Node-26.7.0-LICENSE.txt'),
-    'e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49', 'Node-26.7.0-LICENSE.txt');
+  const raw = verified(join(sourceDirectory, 'Node-26.13.1-LICENSE.txt'),
+    '8e603aa87c70d36e497004f0dec63111511cb61b7d65ace12e10ea791599286c', 'Node-26.13.1-LICENSE.txt');
   if (existsSync(destinationDirectory)) directory(destinationDirectory);
   const target = join(destinationDirectory, 'node.LICENSE');
-  if (existsSync(target)) verified(target, digest(raw), 'node.LICENSE');
-  mkdirSync(destinationDirectory, {recursive:true});
-  if (!existsSync(target)) writeFileSync(target, raw, {flag:'wx',mode:0o644});
-  verified(target,digest(raw),'node.LICENSE');
+  mkdirSync(destinationDirectory, { recursive: true });
+  if (existsSync(target)) {
+    const previous = lstatSync(target);
+    if (!previous.isFile()) throw new Error('Regular node.LICENSE file required');
+    const previousDigest = digest(readFileSync(target));
+    if (previousDigest === digest(raw)) return previousDigest;
+    if (previousDigest !== 'e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49') {
+      throw new Error('Unexpected staged node.LICENSE');
+    }
+  }
+  const staging = mkdtempSync(join(destinationDirectory, '.node-license-'));
+  try {
+    const temporary = join(staging, 'node.LICENSE');
+    writeFileSync(temporary, raw, { flag: 'wx', mode: 0o644 });
+    renameSync(temporary, target);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+  verified(target, digest(raw), 'node.LICENSE');
   return digest(raw);
 }
 

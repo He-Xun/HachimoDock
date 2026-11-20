@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { prepareBuiltInP4Ready } from "./prepare-p4-ready-assets.mjs";
 import { cleanSkillBytecode } from "./clean-skill-bytecode.mjs";
 import { prepareVoiceRuntime } from "./voice-runtime-resources.mjs";
-import { copyNodeRuntimeLicense, verifyDesktopLicenseInventory } from "./dependency-license-resources.mjs";
+import { copyNodeRuntimeLicense, verifyDesktopLicenseInventory, verifyNodeRuntime } from "./dependency-license-resources.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDir, "../..");
@@ -436,6 +436,7 @@ let sourceRuntime = process.env.PET_MANAGER_NODE_BIN
 if (!process.env.PET_MANAGER_NODE_BIN && existsSync(targetRuntime)) {
   try {
     assertRuntimeMatchesTarget(targetRuntime, target, targetArch);
+    verifyNodeRuntime(targetRuntime);
     sourceRuntime = targetRuntime;
     console.log(`reusing validated staged Node runtime: ${targetRuntime}`);
   } catch {
@@ -453,6 +454,7 @@ if (!existsSync(sourceRuntime)) {
 }
 
 assertRuntimeMatchesTarget(sourceRuntime, target, targetArch);
+verifyNodeRuntime(sourceRuntime);
 ensureBridgeDependencies();
 mkdirSync(generatedRuntime, { recursive: true });
 
