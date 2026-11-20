@@ -119,8 +119,8 @@ static BY_HANDLE_FILE_INFORMATION inspect(const Handle& file, bool directory) {
 
 struct Ace {
     std::wstring sid;
-    unsigned type;
-    unsigned flags;
+    BYTE type;
+    BYTE flags;
     DWORD mask;
     bool operator==(const Ace&) const = default;
 };
