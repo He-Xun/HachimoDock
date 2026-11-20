@@ -6255,6 +6255,23 @@ async fn test_device_asr_settings() -> Result<volcengine_asr::DeviceAsrProbeStat
 }
 
 #[tauri::command]
+async fn test_device_tts_settings() -> Result<u128, String> {
+    let config = voice_chat_settings::tts_config("zh_female_vv_uranus_bigtts", "", 1.0)?;
+    let mut client = doubao_tts::DoubaoTtsClient::new(config);
+    let started = std::time::Instant::now();
+    let bytes = tokio::time::timeout(
+        std::time::Duration::from_secs(25),
+        client.synthesize("语音合成测试。", |_| {}),
+    )
+    .await
+    .map_err(|_| "语音合成测试超时")??;
+    if bytes == 0 {
+        return Err("语音合成服务未返回有效音频".into());
+    }
+    Ok(started.elapsed().as_millis())
+}
+
+#[tauri::command]
 fn ensure_device_voice_runtime(
     input: Option<EnsureDeviceVoiceRuntimeInput>,
 ) -> Result<serde_json::Value, String> {
@@ -12512,6 +12529,7 @@ pub fn run() {
             load_device_asr_settings,
             save_device_asr_settings,
             test_device_asr_settings,
+            test_device_tts_settings,
             ensure_device_voice_runtime,
             ensure_voice_runtime,
             stop_voice_runtime,

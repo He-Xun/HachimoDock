@@ -90,6 +90,7 @@
           "load_device_asr_settings",
           "save_device_asr_settings",
           "test_device_asr_settings",
+          "test_device_tts_settings",
           "ensure_device_voice_runtime",
           "ensure_voice_runtime",
           "stop_voice_runtime",

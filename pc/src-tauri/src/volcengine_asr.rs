@@ -44,8 +44,9 @@ const FINAL_TIMEOUT: Duration = Duration::from_secs(8);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const AUDIO_INPUT_TIMEOUT: Duration = Duration::from_secs(8);
 const PCM_SAMPLE_BYTES: usize = 2;
-const PROBE_FINAL_SILENCE_PCM_BYTES: usize = 640;
-const PROBE_SILENCE_PCM_BYTES: usize = 3_200;
+// eSpeak NG reads "Speech test", stored as 16 kHz mono S16LE. A save test
+// never needs the device microphone or recorded user audio.
+const PROBE_SPEECH_PCM: &[u8] = include_bytes!("../test-fixtures/speech-probe.s16le");
 // Admission bounds cover at most 30 seconds of 16 kHz S16LE PCM, even
 // while a connection/write is stalled. Finish/Cancel are independent of PCM.
 const MAX_QUEUED_PCM_BYTES: usize = 16_000 * 2 * 30;
@@ -676,11 +677,17 @@ pub fn save_settings(input: DeviceAsrSettingsInput) -> Result<DeviceAsrSettingsS
         .map(str::to_string)
         .unwrap_or_else(|| existing.model.trim().to_string());
 
-    let base_url = if provider == "openai" {
-        crate::voice_chat_settings::custom_speech_base_url(&base_url)?
-    } else { String::new() };
-    let same_scope = provider == existing.provider && (provider != "openai"
-        || crate::voice_chat_settings::custom_speech_base_url(&existing.base_url).ok().as_deref() == Some(base_url.as_str()));
+    let (base_url, same_endpoint) = if provider == "openai" {
+        use crate::voice_chat_settings::custom_speech_endpoint;
+
+        let endpoint = custom_speech_endpoint(&base_url)?;
+        let same = custom_speech_endpoint(&existing.base_url)
+            .is_ok_and(|existing| existing.api_root == endpoint.api_root);
+        (base_url.trim_end_matches('/').to_owned(), same)
+    } else {
+        (String::new(), true)
+    };
+    let same_scope = provider == existing.provider && same_endpoint;
     if !same_scope && !input.api_key.as_deref().is_some_and(|key| !key.trim().is_empty()) {
         return Err("切换语音服务或地址时，请填写该服务的 API Key".into());
     }
@@ -728,33 +735,14 @@ pub async fn probe_saved_settings() -> Result<DeviceAsrProbeStatus, String> {
     let config = load_runtime_config()?;
     let started = Instant::now();
     if config.provider == "openai" {
-        let base = crate::voice_chat_settings::custom_speech_base_url(&config.base_url)?;
-        let url = format!("{base}/v1/models");
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| format!("无法创建探测客户端: {e}"))?;
-        let mut req = client.get(&url);
-        if !config.api_key.trim().is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", config.api_key.trim()));
-        }
-        let resp = req.send().await.map_err(|_| "语音服务探测失败")?;
-        let body = crate::voice_chat_settings::read_custom_speech_response(resp, 256 * 1024).await?;
-        let models: serde_json::Value = serde_json::from_slice(&body).map_err(|_| "模型列表格式无效")?;
-        let model_ok = config.model.trim().is_empty() || models["data"].as_array().is_some_and(|rows|
-            rows.iter().any(|row| row["id"] == config.model));
+        transcribe_custom_speech(&config, PROBE_SPEECH_PCM, Duration::from_secs(20)).await?;
         return Ok(DeviceAsrProbeStatus {
-            ok: model_ok,
+            ok: true,
             provider: config.provider.clone(),
             resource_id: config.model.clone(),
             latency_ms: started.elapsed().as_millis(),
             log_id: String::new(),
-            message: if model_ok {
-                "自定义语音识别端点可达".to_string()
-            } else {
-                format!("端点可达，但模型列表中没有 {}", config.model)
-            },
+            message: "语音识别已转写测试音频".to_string(),
         });
     }
     let (mut socket, log_id) = connect_cloud_socket(&config).await?;
@@ -765,13 +753,14 @@ pub async fn probe_saved_settings() -> Result<DeviceAsrProbeStatus, String> {
         send_stream_message(&mut socket, Message::Binary(
             encode_full_client_request(&recognition_payload())?.into()
         ), "探测初始化", &log_id).await?;
-        // Explicit settings probe only, never production-stream keepalive.
-        send_stream_message(&mut socket, Message::Binary(
-            encode_audio_request(&vec![0_u8; PROBE_SILENCE_PCM_BYTES], false)?.into()
-        ), "探测音频", &log_id).await?;
-        send_stream_message(&mut socket, Message::Binary(
-            encode_audio_request(&vec![0_u8; PROBE_FINAL_SILENCE_PCM_BYTES], true)?.into()
-        ), "探测结束帧", &log_id).await?;
+        let frames = PROBE_SPEECH_PCM.chunks(6_400);
+        let count = frames.len();
+        for (index, pcm) in frames.enumerate() {
+            send_stream_message(&mut socket, Message::Binary(
+                encode_audio_request(pcm, index + 1 == count)?.into()
+            ), "探测音频", &log_id).await?;
+        }
+        let mut transcript = String::new();
         loop {
             let message = timeout_at_message(deadline, &mut socket).await?;
             match message {
@@ -781,12 +770,17 @@ pub async fn probe_saved_settings() -> Result<DeviceAsrProbeStatus, String> {
                         return Err(format_server_error(&frame, &log_id));
                     }
                     if frame.message_type == MSG_FULL_SERVER_RESPONSE {
-                        validate_response_payload(&frame.payload, &log_id, None)?;
+                        let value = validate_response_payload(&frame.payload, &log_id, None)?;
+                        let text = extract_transcript(&value);
+                        if !text.is_empty() { transcript = text; }
                         if !frame.is_final() { continue; }
+                        if transcript.is_empty() {
+                            return Err("语音识别服务未转写测试音频".into());
+                        }
                         return Ok(DeviceAsrProbeStatus {
                             ok: true, provider: config.provider.clone(), resource_id: config.resource_id.clone(),
                             latency_ms: started.elapsed().as_millis(), log_id,
-                            message: "语音识别探测已收到服务端最终响应".to_string(),
+                            message: "语音识别已转写测试音频".to_string(),
                         });
                     }
                 }
@@ -886,10 +880,10 @@ pub fn stored_api_key() -> Option<String> {
 }
 
 pub(crate) fn custom_key_for_endpoint(endpoint: &str) -> Option<String> {
-    let expected = crate::voice_chat_settings::custom_speech_base_url(endpoint).ok()?;
+    let expected = crate::voice_chat_settings::custom_speech_endpoint(endpoint).ok()?;
     let config = load_runtime_config().ok()?;
     (config.provider == "openai"
-        && crate::voice_chat_settings::custom_speech_base_url(&config.base_url).ok()? == expected
+        && crate::voice_chat_settings::custom_speech_endpoint(&config.base_url).ok()?.api_root == expected.api_root
         && !config.api_key.trim().is_empty()).then_some(config.api_key)
 }
 
@@ -1108,7 +1102,7 @@ async fn run_openai_asr_session(
     if model.is_empty() {
         return Err(round.fail_at("config", "自定义语音识别未配置模型名称".to_string()));
     }
-    let base_url = crate::voice_chat_settings::custom_speech_base_url(&config.base_url)
+    crate::voice_chat_settings::custom_speech_endpoint(&config.base_url)
         .map_err(|e| round.fail_at("config", e))?;
     round.set_stage("first_pcm_wait");
     let mut pending = Vec::new();
@@ -1143,38 +1137,71 @@ async fn run_openai_asr_session(
         return Err(round.fail_at("first_pcm_empty", "未收到足够的真实麦克风 PCM".to_string()));
     }
     round.set_stage("openai_upload");
-    let wav = build_wav_16k_mono(&pending);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| round.fail_at("upload", format!("无法创建识别客户端: {e}")))?;
-    let mut form = reqwest::multipart::Form::new()
-        .part("file", reqwest::multipart::Part::bytes(wav).file_name("audio.wav"))
-        .text("model", model.clone());
-    let mut req = client
-        .post(format!("{}/v1/audio/transcriptions", base_url))
-        .multipart(form);
-    if !config.api_key.trim().is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", config.api_key.trim()));
-    }
-    let resp = req.send().await.map_err(|_| round.fail_at("upload", "语音识别请求失败".into()))?;
-    let body = crate::voice_chat_settings::read_custom_speech_response(resp, 256 * 1024).await
-        .map_err(|e| round.fail_at("upload", e))?;
-    let reply: serde_json::Value = serde_json::from_slice(&body)
-        .map_err(|_| round.fail_at("transcript", "语音识别响应格式无效".into()))?;
-    let text = reply["text"].as_str().unwrap_or("");
-    if text.trim().is_empty() {
-        callback(StreamingSpeechEvent::Ready);
-        return Err(round.fail_at("transcript", "未识别到语音内容".to_string()));
-    }
+    let text = transcribe_custom_speech(&config, &pending, Duration::from_secs(60))
+        .await.map_err(|error| round.fail_at("upload", error))?;
     callback(StreamingSpeechEvent::Ready);
     callback(StreamingSpeechEvent::Final {
         revision: 1,
-        text: text.trim().to_string(),
+        text,
         confidence: None,
     });
     Ok(())
+}
+
+async fn transcribe_custom_speech(
+    config: &RuntimeAsrConfig,
+    pcm: &[u8],
+    timeout: Duration,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use crate::voice_chat_settings::{custom_speech_endpoint, read_custom_speech_response};
+
+    let model = config.model.trim();
+    if model.is_empty() {
+        return Err("自定义语音识别未配置模型名称".into());
+    }
+    let endpoint = custom_speech_endpoint(&config.base_url)?;
+    let wav = build_wav_16k_mono(pcm);
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "无法创建语音识别客户端")?;
+    let root = &endpoint.api_root;
+    let mut request = if endpoint.uses_chat_completions {
+        client.post(format!("{root}/chat/completions")).json(&serde_json::json!({
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "input_audio",
+                    "input_audio": {"data": format!("data:audio/wav;base64,{}", STANDARD.encode(wav))},
+                }],
+            }],
+            "stream": false,
+        }))
+    } else {
+        let form = reqwest::multipart::Form::new()
+            .part("file", reqwest::multipart::Part::bytes(wav).file_name("audio.wav")
+                .mime_str("audio/wav").map_err(|_| "无法设置语音文件格式")?)
+            .text("model", model.to_owned());
+        client.post(format!("{root}/audio/transcriptions")).multipart(form)
+    };
+    if !config.api_key.trim().is_empty() {
+        request = request.bearer_auth(config.api_key.trim());
+    }
+    let response = request.send().await.map_err(|_| "语音识别请求失败或超时")?;
+    let body = read_custom_speech_response(response, 256 * 1024).await
+        .map_err(|error| format!("语音识别失败（{error}）"))?;
+    let reply: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|_| "语音识别响应格式无效")?;
+    let transcript = if endpoint.uses_chat_completions {
+        &reply["choices"][0]["message"]["content"]
+    } else {
+        &reply["text"]
+    };
+    transcript.as_str().map(str::trim).filter(|text| !text.is_empty())
+        .map(str::to_owned).ok_or_else(|| "未识别到语音内容".into())
 }
 
 /// Wrap raw 16 kHz mono 16-bit little-endian PCM in a minimal WAV container.
@@ -2170,11 +2197,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_asr_transcribes_wav_using_both_protocols() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use crate::voice_chat_settings::mock_speech_response;
+
+        for (suffix, route, response) in [
+            ("/speech/v1", "/speech/v1/audio/transcriptions", serde_json::json!({"text": " Speech test. "})),
+            ("/speech/v1/chat/completions", "/speech/v1/chat/completions",
+                serde_json::json!({"choices": [{"message": {"content": " Speech test. "}}]})),
+        ] {
+            let (origin, request) = mock_speech_response("application/json", response.to_string().into_bytes()).await;
+            let config = RuntimeAsrConfig {
+                provider: "openai".into(), api_key: "speech-fixture".into(), resource_id: String::new(),
+                base_url: format!("{origin}{suffix}"), model: "fixture-asr".into(),
+            };
+            assert_eq!(transcribe_custom_speech(&config, PROBE_SPEECH_PCM, Duration::from_secs(5)).await.unwrap(), "Speech test.");
+            let (headers, body) = request.await.unwrap();
+            assert!(headers.starts_with(&format!("POST {route} HTTP/1.1")));
+            assert!(headers.lines().filter_map(|line| line.split_once(':')).any(|(name, value)| {
+                name.eq_ignore_ascii_case("authorization") && value.trim() == "Bearer speech-fixture"
+            }));
+            let wav = build_wav_16k_mono(PROBE_SPEECH_PCM);
+            if suffix.ends_with("/chat/completions") {
+                let payload: Value = serde_json::from_slice(&body).unwrap();
+                let part = &payload["messages"][0]["content"][0];
+                assert_eq!(payload["model"], "fixture-asr");
+                assert_eq!(part["type"], "input_audio");
+                let audio = part["input_audio"]["data"].as_str().unwrap().strip_prefix("data:audio/wav;base64,").unwrap();
+                assert_eq!(STANDARD.decode(audio).unwrap(), wav);
+            } else {
+                assert!(headers.contains("multipart/form-data"));
+                assert!(body.windows(wav.len()).any(|bytes| bytes == wav));
+            }
+        }
+    }
+
+    #[tokio::test]
     #[ignore = "requires saved Volcengine credentials and cloud access"]
-    async fn saved_credentials_probe_accepts_real_final_silence_packet() {
+    async fn saved_credentials_probe_transcribes_test_clip() {
         let status = probe_saved_settings()
             .await
-            .expect("saved credentials should accept a real PCM final packet");
+            .expect("saved credentials should transcribe the test clip");
         assert!(status.ok);
         assert_eq!(status.provider, "volcengine");
     }

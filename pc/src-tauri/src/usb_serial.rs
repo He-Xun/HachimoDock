@@ -3272,11 +3272,11 @@ impl UsbSerialManager {
         expected_connection_id: Option<u64>,
         write_slice_bytes: Option<usize>,
     ) -> Result<(), String> {
-        self.send_inner_admitted(topic,payload,flush,expected_board_device_id,expected_connection_id,write_slice_bytes,None)
+        self.send_inner_admitted(topic,payload,flush,expected_board_device_id,expected_connection_id,write_slice_bytes,None,false)
     }
     fn send_inner_admitted(
         &self,topic:&str,payload:&serde_json::Value,flush:bool,
-        expected_board_device_id:Option<&str>,expected_connection_id:Option<u64>,write_slice_bytes:Option<usize>,program_epoch:Option<u64>,
+        expected_board_device_id:Option<&str>,expected_connection_id:Option<u64>,write_slice_bytes:Option<usize>,program_epoch:Option<u64>,test_speech:bool,
     )->Result<(),String>{
         let owned_notes=topic=="audio/control"&&expected_connection_id.is_some()&&payload.get("captureOwner").is_some();
         let preempt_on_send = !owned_notes&&((topic=="audio/conversation"&&payload["enabled"]==true)
@@ -3348,6 +3348,7 @@ impl UsbSerialManager {
             Some(crate::normalize_agent_id(payload["targetSource"].as_str().unwrap_or(""))
                 .ok_or("follow source is not recognized")?)
         } else { None };
+        let mut test_payload = test_speech.then(|| payload.clone());
         {
             let mut scope = self.follow_scope.lock().map_err(|_| "follow scope unavailable")?;
             if scope.as_ref().is_some_and(|s| s.generation != conn.connection_id || s.board != conn.board_device_id) {
@@ -3358,10 +3359,25 @@ impl UsbSerialManager {
                 // only a new explicit binding submission can reopen it.
                 *scope = Some(UsbFollowScope { generation: conn.connection_id, board: conn.board_device_id.clone(),
                     agent: agent.clone(), session: None, submitted: false });
-            } else if scope.as_ref().is_some_and(|s| !s.allows(topic, payload)) {
-                return Err("stale follow agent/session; state not submitted".into());
+            } else if let Some(scope) = scope.as_ref() {
+                if let Some(test) = test_payload.as_mut() {
+                    // Only the local test command is stamped from the current
+                    // physical scope, while the wire/connection locks are held.
+                    test["source"] = serde_json::json!(scope.agent);
+                    if let Some(session) = &scope.session {
+                        test["sessionId"] = serde_json::json!(session);
+                    }
+                }
+                if !scope.allows(topic, test_payload.as_ref().unwrap_or(payload)) {
+                    return Err(if test_speech {
+                        "Agent 跟随尚未就绪，请稍后重试测试消息"
+                    } else {
+                        "stale follow agent/session; state not submitted"
+                    }.into());
+                }
             }
         }
+        let payload = test_payload.as_ref().unwrap_or(payload);
 
         if topic=="audio/volume" {
             master_volume::validate_write(conn,expected_board_device_id,expected_connection_id,payload)?;
@@ -4744,10 +4760,10 @@ impl UsbSerialManager {
         self.send(&topic, payload)
     }
 
-    /// Send speech text to the device
+    /// Send a local test bubble under the current device follow scope.
     pub fn send_speech(&self, text: &str) -> Result<(), String> {
         let payload = serde_json::json!({"text": text});
-        self.send("speech/text", &payload)
+        self.send_inner_admitted("speech/text", &payload, true, None, None, None, None, true)
     }
 
     /// Send a control command to the device
@@ -8980,6 +8996,23 @@ manager.activate_memory_test_connection();
         assert!(manager.check_session_follow_target("p4-test", "codex", "1", "0123456789abcdef").is_err());
         assert!(!manager.session_follow_target_is_current("p4-test", "1", "codex"));
         assert!(recorded.lock().unwrap().writes.is_empty());
+        assert!(manager.send_speech("test").is_err());
+        assert!(recorded.lock().unwrap().writes.is_empty());
+        {
+            let mut scope = manager.follow_scope.lock().unwrap();
+            let scope = scope.as_mut().unwrap();
+            scope.submitted = true;
+            scope.session = Some("active-session".into());
+        }
+        assert!(manager.send("speech/text", &serde_json::json!({"text":"old", "source":"codex","sessionId":"retired-session"})).is_err());
+        assert!(recorded.lock().unwrap().writes.is_empty());
+        manager.send_speech("test").unwrap();
+        let wire = recorded.lock().unwrap().writes.concat();
+        let message: serde_json::Value = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(message["topic"], "speech/text");
+        assert_eq!(message["payload"]["source"], "codex");
+        assert_eq!(message["payload"]["sessionId"], "active-session");
+        assert_eq!(message["payload"]["text"], "test");
     }
 
     #[test]

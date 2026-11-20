@@ -314,7 +314,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
       ...current,
       pending: true,
       tone: "muted",
-      message: "正在保存并测试语音识别服务…",
+      message: "正在保存并测试语音转写与合成…",
     }));
     try {
       saved = await invoke("save_device_asr_settings", {
@@ -330,8 +330,8 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
           input: {
             ttsProvider: "openai",
             ttsBaseUrl: speechCustom.baseUrl.trim(),
-            ttsModel: speechCustom.ttsModel.trim() || null,
-            ttsVoice: speechCustom.ttsVoice.trim() || null,
+            ttsModel: speechCustom.ttsModel.trim(),
+            ttsVoice: speechCustom.ttsVoice.trim(),
           },
         });
       } else {
@@ -342,14 +342,24 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
         configured: saved?.configured === true,
       });
       setAsrApiKey("");
-      const probe = await invoke("test_device_asr_settings");
-      setAsrApiKey("");
+      const [asr, tts] = await Promise.allSettled([
+        invoke("test_device_asr_settings"),
+        invoke("test_device_tts_settings"),
+      ]);
+      const transcribed = asr.status === "fulfilled" && asr.value?.ok === true;
+      const synthesized = tts.status === "fulfilled";
+      const asrResult = transcribed
+        ? `识别通过（${asr.value.latencyMs} ms）`
+        : `识别失败（${asr.status === "rejected" ? asr.reason : asr.value?.message || "服务未返回转写结果"}）`;
+      const ttsResult = synthesized
+        ? `合成通过（${tts.value} ms）`
+        : `合成失败（${tts.reason}）`;
       setAsrState({
         loading: false,
         pending: false,
         configured: saved?.configured === true,
-        tone: "success",
-        message: `Key 已保存，语音识别测试通过（${probe?.latencyMs ?? 0} ms）。可到「人设与声音」试听，检查语音合成是否可用。`,
+        tone: transcribed && synthesized ? "success" : "error",
+        message: `配置已保存。${asrResult}，${ttsResult}。`,
       });
     } catch (error) {
       setAsrState((current) => ({
@@ -358,7 +368,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
         pending: false,
         configured: saved?.configured === true || current.configured,
         tone: "error",
-        message: `${saved ? "共享 Key 已保存，但识别测试失败" : "保存失败"}：${error}`,
+        message: `${saved ? "语音识别配置已保存，语音合成配置保存失败" : "保存失败"}：${error}`,
       }));
     }
   };
@@ -450,7 +460,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
             onClick={() => setAsrProvider("openai")}
             disabled={asrState.pending || asrState.loading}
           >
-            自定义端点（GPUStack 等）
+            自定义端点（MiMo、GPUStack 等）
           </button>
         </div>
         {asrProvider === "openai" && (
@@ -463,9 +473,10 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
                 type="text"
                 value={speechCustom.baseUrl}
                 onChange={(event) => setSpeechCustom((c) => ({ ...c, baseUrl: event.target.value }))}
-                placeholder="https://speech.example.com"
+                placeholder="https://api.xiaomimimo.com/v1"
                 disabled={asrState.pending || asrState.loading}
               />
+              <small>MiMo 官方地址自动适配。兼容 MiMo 协议的代理可填写完整的 /chat/completions 地址。</small>
             </label>
             <label className="ui-field" htmlFor="api-settings-asr-model">
               <span className="ui-field__label">语音识别模型（ASR）</span>
@@ -475,7 +486,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
                 type="text"
                 value={speechCustom.asrModel}
                 onChange={(event) => setSpeechCustom((c) => ({ ...c, asrModel: event.target.value }))}
-                placeholder="faster-whisper-large-v3"
+                placeholder="mimo-v2.5-asr 或 faster-whisper-large-v3"
                 disabled={asrState.pending || asrState.loading}
               />
             </label>
@@ -487,7 +498,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
                 type="text"
                 value={speechCustom.ttsModel}
                 onChange={(event) => setSpeechCustom((c) => ({ ...c, ttsModel: event.target.value }))}
-                placeholder="cosyvoice-300m-sft"
+                placeholder="mimo-v2.5-tts 或 cosyvoice-300m-sft"
                 disabled={asrState.pending || asrState.loading}
               />
             </label>
@@ -499,7 +510,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
                 type="text"
                 value={speechCustom.ttsVoice}
                 onChange={(event) => setSpeechCustom((c) => ({ ...c, ttsVoice: event.target.value }))}
-                placeholder="Chinese Female"
+                placeholder="MiMo 可留空以使用默认音色"
                 disabled={asrState.pending || asrState.loading}
               />
             </label>

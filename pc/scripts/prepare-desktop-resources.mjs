@@ -465,6 +465,11 @@ if (target !== "windows") chmodSync(targetRuntime, 0o755);
 
 copyNodeRuntimeLicense(targetRuntime, join(repositoryRoot, "licenses"), generatedRuntime);
 
+if (target === "windows") {
+  const result = spawnSync(process.execPath, [join(scriptDir, "build-windows-acl.mjs")], { stdio: "inherit" });
+  if (result.error || result.status !== 0) throw new Error("Windows ACL 校验工具构建失败");
+}
+
 const ffmpegRuntimeName = ensureBundledFfmpeg(target, targetArch);
 
 const buildHostFfmpeg = process.env.PET_MANAGER_BUILD_FFMPEG_BIN || "ffmpeg";

@@ -276,8 +276,14 @@ fn apply_llm_defaults(settings: &mut VoiceChatSettings) {
     }
 }
 
-/// ASR and TTS resolve the same key after legacy migration; no hidden TTS override.
-pub(crate) fn custom_speech_base_url(value: &str) -> Result<String, String> {
+pub(crate) struct CustomSpeechEndpoint {
+    pub api_root: String,
+    pub uses_chat_completions: bool,
+}
+
+/// Explicit API paths select the protocol. Existing MiMo base URLs use the
+/// native speech contract without asking users to reenter their credentials.
+pub(crate) fn custom_speech_endpoint(value: &str) -> Result<CustomSpeechEndpoint, String> {
     let url = reqwest::Url::parse(value.trim()).map_err(|_| "语音服务地址无效")?;
     let host = url.host_str().ok_or("语音服务地址缺少主机")?;
     let loopback = host == "localhost"
@@ -288,7 +294,28 @@ pub(crate) fn custom_speech_base_url(value: &str) -> Result<String, String> {
     {
         return Err("语音服务需使用 HTTPS，本机回环地址可用 HTTP，地址中请勿携带凭据".into());
     }
-    Ok(url.as_str().trim_end_matches('/').trim_end_matches("/v1").to_owned())
+    let address = url.as_str().trim_end_matches('/');
+    if let Some(root) = address.strip_suffix("/chat/completions") {
+        return Ok(CustomSpeechEndpoint { api_root: root.into(), uses_chat_completions: true });
+    }
+    if let Some(root) = address.strip_suffix("/audio/transcriptions").or_else(|| address.strip_suffix("/audio/speech")) {
+        return Ok(CustomSpeechEndpoint { api_root: root.into(), uses_chat_completions: false });
+    }
+    let api_root = if url.path().trim_end_matches('/').ends_with("/v1") {
+        address.to_owned()
+    } else {
+        format!("{address}/v1")
+    };
+    Ok(CustomSpeechEndpoint {
+        api_root,
+        uses_chat_completions: matches!(
+            host,
+            "api.xiaomimimo.com"
+                | "token-plan-cn.xiaomimimo.com"
+                | "token-plan-sgp.xiaomimimo.com"
+                | "token-plan-ams.xiaomimimo.com"
+        ),
+    })
 }
 
 pub(crate) async fn read_custom_speech_response(
@@ -589,7 +616,8 @@ pub fn tts_config(speaker: &str, clone_speaker_id: &str, speed: f32) -> Result<D
     );
     cfg.tts_provider = settings.tts_provider.clone();
     if settings.tts_provider == "openai" {
-        cfg.tts_base_url = custom_speech_base_url(&settings.tts_base_url)?;
+        custom_speech_endpoint(&settings.tts_base_url)?;
+        cfg.tts_base_url = settings.tts_base_url;
         cfg.tts_model = settings.tts_model.clone();
         cfg.tts_voice = settings.tts_voice.trim().to_owned();
     }
@@ -597,7 +625,65 @@ pub fn tts_config(speaker: &str, clone_speaker_id: &str, speed: f32) -> Result<D
 }
 
 #[cfg(test)]
+pub(crate) async fn mock_speech_response(
+    content_type: &'static str,
+    body: Vec<u8>,
+) -> (String, tokio::task::JoinHandle<(String, Vec<u8>)>) {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let worker = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut headers = String::new();
+        loop {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).await.unwrap() > 0);
+            if line == "\r\n" {
+                break;
+            }
+            headers.push_str(&line);
+        }
+        let length = headers.lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .map(|(_, value)| value.trim().parse().unwrap())
+            .unwrap();
+        let mut request = vec![0; length];
+        reader.read_exact(&mut request).await.unwrap();
+        let stream = reader.get_mut();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len(),
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(&body).await.unwrap();
+        (headers, request)
+    });
+    (origin, worker)
+}
+
+#[cfg(test)]
 mod tests {
+    #[test]
+    fn custom_speech_endpoint_preserves_prefix_and_selects_protocol() {
+        for (address, root, chat) in [
+            ("https://api.xiaomimimo.com/v1/", "https://api.xiaomimimo.com/v1", true),
+            ("https://token-plan-cn.xiaomimimo.com", "https://token-plan-cn.xiaomimimo.com/v1", true),
+            ("https://token-plan-ams.xiaomimimo.com/v1", "https://token-plan-ams.xiaomimimo.com/v1", true),
+            ("https://example.test/openai/v1", "https://example.test/openai/v1", false),
+            ("https://example.test/openai/v1/chat/completions", "https://example.test/openai/v1", true),
+            ("https://api.xiaomimimo.com/v1/audio/speech", "https://api.xiaomimimo.com/v1", false),
+        ] {
+            let endpoint = super::custom_speech_endpoint(address).unwrap();
+            assert_eq!(endpoint.api_root, root);
+            assert_eq!(endpoint.uses_chat_completions, chat);
+        }
+        assert!(super::custom_speech_endpoint("https://example.test/v1?key=fixture").is_err());
+        assert!(super::custom_speech_endpoint("http://example.test/v1").is_err());
+    }
+
     #[test]
     fn mimo_china_token_plan_never_reuses_the_pay_as_you_go_key() {
         let initial = VoiceChatSettings { llm_provider: "mimo".into(), llm_api_key: "payg-fixture".into(), ..Default::default() };

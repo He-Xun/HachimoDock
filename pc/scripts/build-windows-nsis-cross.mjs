@@ -237,6 +237,11 @@ const dshBridgeResources = stageDshBridgeResources(
   join(tauriRoot, "tauri.conf.json"), tauriRoot, stageRoot,
 );
 mkdirSync(join(stageRoot, "bridge", "runtime"), { recursive: true });
+const windowsAcl = join(tauriRoot, "generated-runtime", "windows-acl.exe");
+assertPeExecutable(windowsAcl, "Windows native ACL verifier");
+const stagedAcl = join(stageRoot, "dsh-bridge", "windows-acl.exe");
+copyFileSync(windowsAcl, stagedAcl);
+assertExactFileCopy(windowsAcl, stagedAcl, "Windows native ACL verifier");
 copyFileSync(windowsNode, join(stageRoot, "bridge", "runtime", "node.exe"));
 copyNodeRuntimeLicense(windowsNode, join(repositoryRoot, "licenses"), join(stageRoot, "bridge", "runtime"));
 mkdirSync(join(stageRoot, "tools"), { recursive: true });
