@@ -57,4 +57,7 @@ foreach(jpeg_file IN ITEMS jpeg_decode.c jpeg_parse_marker.c)
   set(jpeg_sources "${jpeg_fixed_sources}")
 endforeach()
 set_property(TARGET ${jpeg_lib} PROPERTY SOURCES "${jpeg_sources}")
+# ESP-IDF assertions can put __FILE__ in the app image. Keep the SDK-style
+# relative name for the generated files too.
+target_compile_options(${jpeg_lib} PRIVATE "-fmacro-prefix-map=${jpeg_output}=esp_driver_jpeg")
 message(STATUS "ESP32-P4 v1 JPEG security backport enabled")
