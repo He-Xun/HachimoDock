@@ -854,7 +854,9 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             let status = Command::new(env::current_exe().unwrap()).args(["--exact",
                 "petui_authoring::tests::shipped_examples_pack_validate_and_publish_through_cli_in_isolated_library","--nocapture"])
-                .env(FLAG,tmp.path()).env("HOME",tmp.path()).status().unwrap();
+                .env(FLAG, tmp.path())
+                .env(if cfg!(windows) { "USERPROFILE" } else { "HOME" }, tmp.path())
+                .status().unwrap();
             assert!(status.success());
             assert_eq!(fs::read_dir(component_library::library_root(tmp.path())).unwrap().count(),5);
             return;
