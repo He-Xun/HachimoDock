@@ -14,6 +14,27 @@ def spec(ms=120):
 
 
 class Effects(unittest.TestCase):
+    def test_default_volume_is_eighty_percent_and_explicit_mute_is_preserved(self):
+        for encoding in ['wav', 'hab']:
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as tmp:
+                data = spec(100)
+                part = data['cues'][0]['segments'][0]
+                part['hz'] = [1000, 1000]
+                del part['volume']
+                generate(data, tmp, encoding)
+                self.assertNotIn('volume', part)
+                if encoding == 'wav':
+                    with wave.open(str(Path(tmp) / 'confirm.wav')) as sound:
+                        pcm = struct.unpack('<1600h', sound.readframes(1600))
+                    self.assertEqual(max(map(abs, pcm)), 26214)
+                    self.assertEqual((pcm[0], pcm[-1]), (0, 0))
+                else:
+                    self.assertTrue((Path(tmp) / 'speech.hab').read_bytes().startswith(b'HAB1'))
+                part['volume'] = 0
+                generate(data, tmp, 'wav')
+                with wave.open(str(Path(tmp) / 'confirm.wav')) as sound:
+                    self.assertEqual(set(sound.readframes(1600)), {0})
+
     def test_wav_is_audible_bounded_mono_and_fades_to_silence(self):
         with tempfile.TemporaryDirectory() as tmp:
             report = generate(spec(), tmp, 'wav')
@@ -61,7 +82,7 @@ console.log(JSON.stringify({frames:pcm.length,peak:Math.max(...pcm)}));""".repla
             self.assertEqual(check_budget([tmp, Path(tmp) / 'speech.hab'])['files'], 1)
 
     def test_invalid_and_nonfinite_values_cannot_escape_the_budget(self):
-        for bad in [float('nan'), float('inf'), True, -1]:
+        for bad in [float('nan'), float('inf'), True, -1, 1.01]:
             data = spec();data['cues'][0]['segments'][0]['volume'] = bad
             with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
                 generate(data, tmp, 'hab')

@@ -12,6 +12,7 @@ import tempfile
 import wave
 
 MAX_BYTES = 30_000
+DEFAULT_VOLUME = 0.8
 RATE = 16_000
 BLOCK_SAMPLES = 320
 BLOCK_BYTES = 166
@@ -45,13 +46,13 @@ def validated(spec, encoding):
         if not isinstance(segments, list) or not 1 <= len(segments) <= 32:
             raise ValueError('每个音效需要1–32个声音片段')
         for part in segments:
-            if (not isinstance(part, dict) or set(part) != {'wave', 'ms', 'hz', 'volume'}
+            if (not isinstance(part, dict) or set(part) not in ({'wave', 'ms', 'hz'}, {'wave', 'ms', 'hz', 'volume'})
                     or part['wave'] not in ('sine', 'triangle', 'noise')
                     or type(part['ms']) is not int or not 10 <= part['ms'] <= 8000
-                    or not number(part['volume'], 0, 0.7)
+                    or not number(part.get('volume', DEFAULT_VOLUME), 0, 1)
                     or not isinstance(part['hz'], list) or len(part['hz']) != 2
                     or not all(number(hz, 40, 7000) for hz in part['hz'])):
-                raise ValueError('片段需要wave=sine/triangle/noise、ms=10–8000、hz=[起频,止频](40–7000)和volume=0–0.7')
+                raise ValueError('片段需要wave=sine/triangle/noise、ms=10–8000、hz=[起频,止频](40–7000)和可选volume=0–1（默认0.8）')
         if sum(part['ms'] for part in segments) > 8000:
             raise ValueError('单个音效不能超过8秒')
     sizes = [sum(p['ms'] for p in cue['segments']) * RATE // 1000 for cue in cues]
@@ -76,7 +77,7 @@ def synthesize(cue):
                      math.sin(2 * math.pi * phase) if part['wave'] == 'sine' else
                      1 - 4 * abs((phase % 1) - 0.5))
             envelope = min(1, i / fade, (count - 1 - i) / fade)
-            pcm.append(round(value * envelope * part['volume'] * 32767))
+            pcm.append(round(value * envelope * part.get('volume', DEFAULT_VOLUME) * 32767))
     return pcm
 
 

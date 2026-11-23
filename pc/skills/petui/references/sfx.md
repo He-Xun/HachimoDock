@@ -8,12 +8,12 @@
 ## 声明
 
 ```json
-"sfx": {"engine": "p4-sfx-v1", "volume": 60,
+"sfx": {"engine": "p4-sfx-v1", "volume": 80,
         "cues": [{"id": "meow", "preset": "chirp"}, {"id": "munch", "preset": "tap"}]}
 ```
 
 - 需要顶层 `engine: "p4-bounded-runtime-v4"`，设备能力 `widgetSfx = "p4-sfx-v1"`（`widgetLimits.v2.maxSfxCues = 8`）。
-- `volume` 0-100；`cues` 1-8 个，`id` 为 1-15 位 `A-Za-z0-9_.-` 且唯一；`preset` 只能是：
+- `volume` 0-100，新组件默认写80，用户明确指定时沿用指定值；`cues` 1-8 个，`id` 为 1-15 位 `A-Za-z0-9_.-` 且唯一；`preset` 只能是：
 
 | 预设 | 听感 | 时长 | 适合 |
 | --- | --- | --- | --- |
