@@ -826,7 +826,7 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
         if (disposed) return;
         const message = error?.message || String(error);
         setRealtimeChat((current) => ({ ...current, active: false, state: "idle", error: message }));
-        invoke("usb_send_speech", { text: message.slice(0, 60) }).catch(() => {});
+        invoke("usb_send_speech", { text: message.slice(0, 60), expectedBoardDeviceId: boardDeviceId }).catch(() => {});
       });
     }).then(async (stop) => {
       if (disposed) { stop(); return; }

@@ -1,5 +1,7 @@
 export function wifiDeviceControlReady(wifi) {
-  return wifi?.panelControl === true && wifi?.controlTrusted === true;
+  return wifi?.panelControl === true && wifi.controlTrusted === true
+    && typeof wifi.boardDeviceId === "string" && wifi.boardDeviceId.length > 0
+    && /^[0-9a-f]{16}$/i.test(wifi.bootId || "");
 }
 
 export function wifiDeviceControl(invoke, wifi, operation, args = {}) {

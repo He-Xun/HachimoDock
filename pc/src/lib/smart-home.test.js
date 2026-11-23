@@ -25,3 +25,13 @@ test("receipt language distinguishes acceptance from verified state", () => {
   assert.equal(stepLabel({ kind: "wait", seconds: 2 }), "等待 2 秒");
   assert.match(stepLabel({ kind: "set", did: "1", siid: 2, piid: 1, value: false }, [{ did: "1", name: "音箱" }]), /音箱.*false/);
 });
+
+test("partial execution keeps confirmed, uncertain and unsent steps distinct after restart", async () => {
+  const {executionRows} = await import("./smart-home.js");
+  const steps = ["a", "b", "c"].map(did => ({kind:"set", did}));
+  const results = [{step:steps[0], result:{status:"verified"}}];
+  const rows = executionRows({status:"unconfirmed", steps, results, inFlight:steps[1]});
+  assert.deepEqual(rows.map(r => r.result.status), ["verified", "unconfirmed", "not_sent"]);
+  assert.equal(results.length, 1);
+  assert.deepEqual(executionRows({status:"completed", results}), results);
+});

@@ -98,7 +98,7 @@ static bool feed_binding(pet_private_feed_t *out, pet_wifi_endpoint_t *endpoint,
   for (const char *p = component; *p; ++p)
     if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || strchr("-_.", *p))) return false;
   *out = (pet_private_feed_t){.kind = kind, .port = 443};
-  if (kind == PET_PRIVATE_BEARER || kind == PET_GITHUB_ACCOUNT || kind == PET_HTTPS_SUBMIT) {
+  if (kind == PET_PRIVATE_BEARER || kind == PET_HTTPS_SUBMIT) {
     /* Credentials belong in Authorization. Disallow query strings in this
      * first profile so an exported declaration cannot hide them in a URL. */
     if (topic || strchr(url, '?') || !pet_wifi_endpoint_parse(url, endpoint) ||
@@ -141,9 +141,6 @@ bool pet_private_feed_parse(pet_private_feed_t *out, pet_wifi_endpoint_t *endpoi
   if (!cJSON_IsString(kind)) return false;
   const int fields = cJSON_GetArraySize(connection);
 #if PET_P4_SCOPED_WRITE
-  if (fields == 1 && !strcmp(kind->valuestring, "github-account") && url &&
-      !strcmp(url, "https://api.github.com/user"))
-    return feed_binding(out, endpoint, component, url, PET_GITHUB_ACCOUNT, NULL) && bind_owner(out, component);
   const bool post = !strcmp(kind->valuestring, "https-submit");
   if (post || !strcmp(kind->valuestring, "mqtt-publish")) {
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(connection, "value");
@@ -172,7 +169,7 @@ bool pet_private_feed_parse(pet_private_feed_t *out, pet_wifi_endpoint_t *endpoi
 }
 
 static bool secret_valid(const pet_private_feed_t *feed, const pet_private_secret_t *secret) {
-  if (feed->kind == PET_PRIVATE_BEARER || feed->kind == PET_GITHUB_ACCOUNT || feed->kind == PET_HTTPS_SUBMIT) {
+  if (feed->kind == PET_PRIVATE_BEARER || feed->kind == PET_HTTPS_SUBMIT) {
     if (secret->user[0] || !secret->token[0]) return false;
     for (const char *p = secret->token; *p; ++p)
       if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||

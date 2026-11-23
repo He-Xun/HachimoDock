@@ -1842,6 +1842,7 @@ export default function ComponentCenter({ active = true, onOpenWirelessMaintenan
             active={active}
             component={previewComponent}
             onSourceChange={openComponent}
+            onEditionImported={refreshComponentLibrary}
             usb={usb}
             kind={resolveComponentKind(previewComponent.kind, previewComponent.gameType)}
             isLocal={previewComponent.isLocal}
@@ -2162,6 +2163,7 @@ function CreateComponentDrawer({
     "请使用 PetUI（支持技能指令时用 $petui）制作一个桌搭子组件：<用一句话描述用途或玩法>。",
     "先给我看 640×480 UI，确认后再实现。简单组件展示首屏和主操作，复杂组件按需补关键状态。构建后试玩主操作，按需检查实际键位、动效和依赖真机的功能。",
     "控件写动作名，键位提示跟随实际绑定。用真实运行画面做最终封面，交付 .hachiapp，用 petui publish 发布到本地组件库，并说明怎么用。",
+    "发布前检查是否需要配套音效：需要时先让我用一句话说明风格和触发场景，再生成并配上音效；内置配套音效合计不超过30KB。适合联网播放的音频也可使用URL。",
     `PetUI Skill：${authoring.skillPath || "用户目录下的 .agents/skills/petui"}`,
     `使用 Pet Manager 提供的命令构建，工具入口：${authoring.command || "用户目录下的 .claw-pet/authoring/petui（Windows 使用 petui.cmd）"}`,
   ].join("\n");

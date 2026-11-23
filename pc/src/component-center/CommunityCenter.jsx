@@ -518,10 +518,11 @@ export default function CommunityCenter({
     [publish, setPublish] = useState(null),
     [notice, setNotice] = useState("");
   const provenance = useResource(() => request("local"), [revision], []);
+  const [createdOffset, setCreatedOffset] = useState(0);
   const created = useResource(
-    () => (tab === "created" ? request("mine") : null),
-    [tab, revision],
-    [tab],
+    () => (tab === "created" ? request("mine", { offset: createdOffset }) : null),
+    [tab, revision, createdOffset],
+    [tab, createdOffset],
   );
   const changed = useCallback(() => setRevision((v) => v + 1), []);
   const refreshClock = useRef(null);
@@ -538,7 +539,8 @@ export default function CommunityCenter({
   useEffect(() => {
     if (refreshKey) changed();
   }, [refreshKey, changed]);
-  const owned = provenance.data?.owned || {};
+  const owned = { ...provenance.data?.owned };
+  for (const work of created.data?.items || []) owned[work.id] = work;
   const publicationItems=localItems.flatMap(item=>item.sourceAlternatives?.filter(source=>source.isLocal) || (item.isLocal?[item]:[]));
   const unpublished = publicationItems.filter(
     (item) =>
@@ -645,7 +647,7 @@ export default function CommunityCenter({
                   </article>
                 );
               })}
-              {unpublished.map((item) => (
+              {createdOffset === 0 && unpublished.map((item) => (
                 <article key={item.id}>
                   <div>
                     <h3>
@@ -662,7 +664,13 @@ export default function CommunityCenter({
                 </article>
               ))}
             </div>
-            {!created.data?.items?.length && !unpublished.length && (
+            {(createdOffset > 0 || created.data?.nextOffset != null) && <nav aria-label="作品翻页">
+              <Button size="small" disabled={created.loading || createdOffset === 0}
+                onClick={() => setCreatedOffset(Math.max(0, createdOffset - 30))}>上一页</Button>
+              <Button size="small" disabled={created.loading || created.data?.nextOffset == null}
+                onClick={() => setCreatedOffset(created.data.nextOffset)}>下一页</Button>
+            </nav>}
+            {createdOffset === 0 && !created.data?.items?.length && !unpublished.length && (
               <div className="community-empty">
                 <Sparkles size={28} />
                 <strong>从一个小想法开始</strong>
@@ -700,6 +708,7 @@ export default function CommunityCenter({
           onClose={() => setPublish(null)}
           onPublished={(work) => {
             setPublish(null);
+            setCreatedOffset(0);
             setTab("created");
             setNotice(`「${work.name}」已提交审核，通过后会公开上架。`);
             changed();

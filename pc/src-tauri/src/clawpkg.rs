@@ -57,8 +57,6 @@ impl ComponentSyncRequirements {
                 }
                 if matches!(kind, Some("https-submit" | "mqtt-publish")) {
                     result.usb_capabilities.insert("widgetScopedWrite", "p4-scoped-write-v1");
-                } else if kind == Some("github-account") {
-                    result.usb_capabilities.insert("widgetDeviceProvider", "github-account-v1");
                 } else if kind == Some("mqtt-public") {
                     result.usb_capabilities.insert("widgetPublicMqtt", "p4-public-mqtt-v1");
                 }

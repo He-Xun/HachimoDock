@@ -22,11 +22,16 @@ try {
         case 'rankings':return {items:[{...work,rankValue:12}]};
         case 'detail':return {...work,liked:window.communityLiked};
         case 'comments':return {items:window.communityComments,nextOffset:null};
-        case 'mine':return {items:window.communityMine};
+        case 'mine': {
+          const items = window.communityMine.length ? window.communityMine :
+            Array.from({length:31}, (_,i) => ({...work,id:'page-'+i,name:'作品 '+(i+1)+' · 测试',status:'approved'}));
+          const offset = input.offset || 0;
+          return {items:items.slice(offset,offset+30), nextOffset:offset+30 < items.length ? offset+30 : null};
+        }
         case 'like':window.communityLiked=input.active;return {active:input.active,likes:5};
         case 'comment':window.communityComments.push({id:crypto.randomUUID(),name:input.name,text:input.text,at:1780000000});return {ok:true};
-        case 'prepare':return {id:'test-focus',name:work.name,version:'1.1.0',description:work.summary,canPublish:true,hasLicense:true,contentHash:'b'.repeat(64),files:['component.json','LICENSE.txt'],packageBytes:6000,warning:'扫描不能替代人工检查。'};
-        case 'publish':window.communityMine=[{...work,status:'pending',available:false}];return {...work,status:'pending'};
+        case 'prepare':return {coverDataUrl:'data:image/png;base64,iVBORw0KGgo=',id:'test-creation',name:work.name,version:'1.1.0',description:work.summary,canPublish:true,hasLicense:true,contentHash:'b'.repeat(64),files:['component.json','LICENSE.txt'],packageBytes:6000,warning:'扫描不能替代人工检查。'};
+        case 'publish':window.communityMine=[{...work,id:'test-creation',status:'pending',available:false}];return {...work,status:'pending'};
         case 'download':return {entry:{id:'test-focus',name:work.name,version:'1.1.0',isLocal:true,libraryPath:'/test/library'},work};
         default:throw Error('Unexpected action '+input.action);
       }
@@ -41,43 +46,29 @@ try {
     function Test(){const [local,setLocal]=React.useState(items);return React.createElement(Community,{localItems:local,inventory:{freshness:'live',items:[]},onOpenLocal:()=>{window.openedLocal=true;},onCreate:()=>{window.created=true;},onImported:entry=>setLocal(old=>[...old,entry])},React.createElement('div',null,'原有本地组件与按键配置保留'));}
     (dom.createRoot||dom.default.createRoot)(document.getElementById('root')).render(React.createElement(Test));
   });
-  await page.getByRole('heading',{name:'社区新鲜玩法'}).waitFor();
-  await page.getByRole('heading',{name:'专注一刻',exact:true}).waitFor();
-  await page.getByRole('button',{name:'收藏 专注一刻',exact:true}).click();
-  await page.getByRole('tab',{name:'我的收藏'}).click();
-  await page.getByRole('heading',{name:'专注一刻',exact:true}).click();
-  await page.getByRole('dialog').waitFor();
-  await page.getByRole('button',{name:'下载到我的组件'}).click();
-  await page.getByRole('button',{name:/配置与同步到设备/}).waitFor();
-  assert.equal(await page.evaluate(()=>window.communityCalls.some(([name])=>name==='install_clawpkg_over_usb')),false);
-  await page.getByLabel('公开显示名',{exact:true}).fill('UI 测试');
-  await page.getByLabel('分享体验',{exact:true}).fill('<img src=x onerror=alert(1)>');
-  await page.getByLabel(/我同意公开以上显示名/).check();
-  await page.getByRole('button',{name:'发表评论',exact:true}).click();
-  await page.getByText('<img src=x onerror=alert(1)>',{exact:true}).waitFor();
-  assert.equal(await page.locator('.community-comments img').count(),0);
-  await page.getByRole('button',{name:'关闭',exact:true}).click();
-  await page.getByRole('tab',{name:'我的组件'}).click();
+  // Community browsing now lives in the embedded site, covered by test-community-web.mjs.
+  await page.getByRole('tab', {name:'我的组件', exact:true}).waitFor();
   await page.getByText('原有本地组件与按键配置保留').waitFor();
-  await page.getByRole('button',{name:'发布作品'}).click();
-  await page.locator('.community-publish select').first().selectOption('/test/creation');
-  await page.getByText('component.json',{exact:true}).waitFor({state:'attached'});
-  await page.getByLabel('公开作者名',{exact:true}).fill('作者');
-  await page.getByLabel(/许可证名称/).fill('MIT');
-  await page.getByLabel('本次更新说明',{exact:true}).fill('首次发布');
-  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nL8AAAAASUVORK5CYII=','base64');
-  await page.locator('input[type=file]').setInputFiles({name:'fixture.png',mimeType:'image/png',buffer:png});
-  assert.equal(await page.getByRole('button',{name:/提交审核/}).isDisabled(),true);
-  for(const checkbox of await page.locator('.community-publish-checks input').all()) await checkbox.check();
-  await page.getByRole('button',{name:/提交审核/}).click();
-  await page.getByText('待审核',{exact:true}).waitFor();
-  assert.equal(await page.getByRole('button',{name:'等待审核'}).isDisabled(),true);
-  for(const width of [1440,1024,736,360]){
-    await page.setViewportSize({width,height:900});await page.getByRole('tab',{name:'发现玩法'}).click();
-    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`overflow ${width}`);
+  await page.getByRole('tab', {name:'我的创作', exact:true}).click();
+  await page.getByRole('heading', {name:/作品 1 ·/}).first().waitFor();
+  await page.getByRole('button', {name:'下一页'}).click();
+  await page.getByRole('heading', {name:/作品 31 ·/}).waitFor();
+  assert.equal(await page.getByRole('button', {name:'下一页'}).isDisabled(), true);
+  await page.getByRole('button', {name:'上一页'}).click();
+  await page.getByRole('heading', {name:/作品 1 ·/}).first().waitFor();
+  await page.getByRole('button', {name:'发布作品'}).click();
+  await page.getByLabel('选择组件').selectOption('/test/creation');
+  await page.getByText('component.json', {exact:true}).waitFor({state:'attached'});
+  await page.getByLabel('公开作者名', {exact:true}).fill('测试作者');
+  await page.getByLabel(/本次更新说明/).fill('首次发布');
+  await page.getByRole('button', {name:/提交审核/}).click();
+  await page.getByRole('button', {name:'等待审核'}).waitFor();
+  const calls = await page.evaluate(() => window.communityCalls.map(([,args]) => args.input?.action));
+  assert.equal(calls.filter(a => a === 'publish').length, 1);
+  assert.equal(calls.includes('download'), false);
+  for (const width of [1440,1024,736,360]) {
+    await page.setViewportSize({width,height:900});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `overflow ${width}`);
   }
-  await page.setViewportSize({width:1360,height:1000});
-  await page.screenshot({path:'/tmp/hachimo-community-implemented.png',fullPage:true});
-  assert.deepEqual(errors,[]);
-  console.log('PASS: discovery/favorites/details, verified-download separation, plaintext comments, publish consent/moderation, local tab and responsive widths');
-}finally{await browser.close();}
+  console.log('PASS author pagination, local component selection and publication review');
+} finally { await browser.close(); }

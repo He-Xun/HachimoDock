@@ -168,8 +168,6 @@ def valid_private_feed(data):
         return False
     kind = connection.get("type")
     write = kind in ("https-submit", "mqtt-publish")
-    if kind == "github-account":
-        return set(connection) == {"type"} and url == "https://api.github.com/user" and "response_map" not in data
     if write:
         value = connection.get("value")
         if ("response_map" in data or "refresh_action" in data or not isinstance(value, str) or
@@ -272,7 +270,6 @@ DEFAULT_CAPABILITIES = {
     "widgetWifiFeed": "p4-wifi-feed-v1",
     "widgetPrivateFeed": "p4-private-feed-v1",
     "widgetScopedWrite": "p4-scoped-write-v1",
-    "widgetDeviceProvider": "github-account-v1",
     # The PC host's own adapter capability (pc-fetch-v1 lives in the client, not the firmware).
     "widgetPcFetch": "pc-fetch-v1",
     "widgetRuntime": RUNTIME_ENGINE,
@@ -1743,9 +1740,6 @@ def validate_runtime(
         if kind_name in ("https-submit", "mqtt-publish"):
             if capabilities.get("widgetScopedWrite") != "p4-scoped-write-v1":
                 errors.append("目标固件缺少组件限域发送能力")
-        elif kind_name == "github-account":
-            if capabilities.get("widgetDeviceProvider") != "github-account-v1":
-                errors.append("目标固件缺少设备 GitHub 账号能力")
         elif kind_name == "mqtt-public":
             if capabilities.get("widgetPublicMqtt") != "p4-public-mqtt-v1":
                 errors.append("目标固件缺少公开 MQTT 订阅能力")

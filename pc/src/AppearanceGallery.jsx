@@ -1410,7 +1410,7 @@ export function RunningTaskCard({ task, onAbort, onDismiss, onOpenDetail, onConf
             <button className="btn-primary" onClick={onConfirm}>
               {task.awaiting.kind === "reference" ? "参考图正确，生成一段试片" : "试片满意，生成剩余动作"}
             </button>
-            <span className="muted small">不满意可取消；不会自动继续付费生成。</span>
+            <span className="muted small">点击确认后将提交新的生成请求，可能产生费用。取消可保留已有结果。</span>
           </div>
         )}
         {!isRunning && task.resumable && <button className="btn-primary btn-sm" onClick={() => {

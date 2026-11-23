@@ -16,6 +16,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod offline_editions;
+
 const CLAW_PET_DIR_NAME: &str = ".claw-pet";
 const LEGACY_OPENCLAW_DIR_NAME: &str = ".openclaw";
 const LEGACY_DRAFTS_DIR_NAME: &str = "component-drafts";

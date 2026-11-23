@@ -5477,7 +5477,7 @@ int pet_p4_miniapp_write_if_active(const uint8_t scope[32], int (*send)(void *),
   miniapp_runtime_lock();
   int result = -1;
   if (g_runtime.active && !pet_p4_miniapp_storage_busy() &&
-      (pet_feed_is_write(g_runtime.wifi_feed.private.kind) || g_runtime.wifi_feed.private.kind == PET_GITHUB_ACCOUNT) &&
+      pet_feed_is_write(g_runtime.wifi_feed.private.kind) &&
       !memcmp(scope, g_runtime.wifi_feed.private.id, 32)) result = send(context);
   miniapp_runtime_unlock();
   return result;

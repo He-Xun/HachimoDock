@@ -4973,6 +4973,11 @@ impl UsbSerialManager {
         self.send(&topic, payload)
     }
 
+    pub(crate) fn send_test_speech_bound(&self, board: &str, generation: u64, text: &str) -> Result<(), String> {
+        self.send_inner_admitted("speech/text", &serde_json::json!({"text": text}), true,
+            Some(board), Some(generation), None, None, true)
+    }
+
     /// Send a local test bubble under the current device follow scope.
     pub fn send_speech(&self, text: &str) -> Result<(), String> {
         let payload = serde_json::json!({"text": text});

@@ -14824,7 +14824,7 @@ select:focus-visible {
 .toast { overflow-wrap: anywhere; }
 .toast__title { white-space: normal; }
 @media (min-width: 1081px) {
-  .sidebar-nav { padding-block: var(--space-4); }
+  .sidebar-nav { padding-block: 0 var(--space-4); margin-top: 0; }
   .sidebar-nav > [title="键盘配置"] { margin-top: var(--space-3); }
   .app-sidebar { padding-block: var(--space-5); }
   .page-shell__header { padding-block: var(--space-2); }

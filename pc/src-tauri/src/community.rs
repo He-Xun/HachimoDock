@@ -706,7 +706,11 @@ pub fn execute(home: &Path, input: CommunityInput) -> Result<Value, String> {
         }
         "mine" => {
             let _lock = MUTATION.lock().map_err(|_| "社区操作繁忙")?;
-            let result = request(home, "/api/v1/mine", None, true, false)?;
+            let endpoint = match input.offset {
+                Some(offset) => with_query("/api/v1/mine", &[("offset", offset.to_string())]),
+                None => "/api/v1/mine".to_owned(),
+            };
+            let result = request(home, &endpoint, None, true, false)?;
             let mut local = state(home)?;
             if let Some(items) = result["items"].as_array() {
                 for work in items {

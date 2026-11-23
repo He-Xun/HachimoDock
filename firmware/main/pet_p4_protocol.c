@@ -3603,7 +3603,6 @@ __attribute__((optimize("Oz"))) void pet_p4_send_hello_for_board(const char *boa
     cJSON_AddStringToObject(capabilities, "widgetWifiFeedMap", PET_WIFI_DATA_FEED_MAP_CAPABILITY);
     cJSON_AddStringToObject(capabilities, "widgetWifiFeedHttp", PET_WIFI_FEED_HTTP_CAPABILITY);
 #if PET_P4_SCOPED_WRITE
-    cJSON_AddStringToObject(capabilities, "widgetDeviceProvider", "github-account-v1");
     cJSON_AddStringToObject(capabilities, "widgetScopedWrite", "p4-scoped-write-v1");
 #endif
     cJSON_AddStringToObject(capabilities, "widgetPrivateFeed", PET_PRIVATE_FEED_CAPABILITY);

@@ -17,7 +17,6 @@ typedef enum {
   PET_PUBLIC_MQTT,
   PET_HTTPS_SUBMIT,
   PET_MQTT_PUBLISH,
-  PET_GITHUB_ACCOUNT,
 } pet_private_kind_t;
 
 static inline bool pet_feed_is_write(pet_private_kind_t kind) {
@@ -30,7 +29,7 @@ static inline bool pet_feed_is_write(pet_private_kind_t kind) {
 }
 
 static inline bool pet_feed_requires_account(pet_private_kind_t kind) {
-  return kind == PET_GITHUB_ACCOUNT || kind == PET_PRIVATE_BEARER || kind == PET_PRIVATE_MQTT || pet_feed_is_write(kind);
+  return kind == PET_PRIVATE_BEARER || kind == PET_PRIVATE_MQTT || pet_feed_is_write(kind);
 }
 
 typedef struct {

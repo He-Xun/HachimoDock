@@ -61,7 +61,8 @@ import VoiceAssistantPanel, { buildVoiceSummary, formatVoiceSessionOption } from
 import {voiceRuntimeTarget,createVoiceRuntimePoller} from "./dashboard/voice-runtime-target.js";
 import RealtimeChatPanel, { realtimeStateLabel } from "./dashboard/RealtimeChatPanel.jsx";
 import { isRecoveringAsr, realtimeErrorMessage } from "./lib/realtime-feedback.js";
-import { useAgentSessionFeed } from "./dashboard/useAgentSessionFeed.js";
+import { pollWhileVisible } from "./lib/visible-poll.js";
+import { agentSessionFeedFresh, P4_SESSION_EVENT_POLL_MS, useAgentSessionFeed } from "./dashboard/useAgentSessionFeed.js";
 import { useDeviceVoiceRouter } from "./dashboard/useDeviceVoiceRouter.js";
 import { subscribeAsrCredentialUpdates } from "./dashboard/voice-credential-events.js";
 import { useP4SessionSync } from "./dashboard/useP4SessionSync.js";
@@ -880,6 +881,7 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
   wifiInputScopeRef.current = wifiInputScope;
   const voiceTarget = voiceRuntimeTarget(usb, selectedAgentId, wifi);
   const voiceOnWifi = voiceTarget.kind === "wifi";
+  const monitorVoiceRuntime = active || voiceTarget.kind === "legacy";
   const p4VoiceRuntime = isP4Runtime || voiceOnWifi;
   const voiceTargetKeyRef = useRef(voiceTarget.key);
   // Update during render: an old Promise may settle before effect cleanup.
@@ -1098,27 +1100,47 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
         inFlight = false;
       }
     };
-    run();
-    const id = setInterval(run, 5000);
+    // A live session feed already proves Bridge reachability. If the feed stalls
+    // or no Agent is followed, keep the recovery path available in the tray.
+    const check = () => {
+      if ((!active || document.hidden) && agentSessionFeedFresh(selectedAgentId, 2 * P4_SESSION_EVENT_POLL_MS)) return;
+      void run();
+    };
+    const resume = () => { if (active && !document.hidden) void run(); };
+    check();
+    const id = setInterval(check, 5000);
+    document.addEventListener("visibilitychange", resume);
     return () => {
       cancelled = true;
       ctl.abort();
       clearInterval(id);
+      document.removeEventListener("visibilitychange", resume);
     };
-  }, []);
+  }, [active, selectedAgentId]);
 
   // Poll only after reading the connected device's identity and capability.
   useEffect(() => {
     voiceDispatch({type:"set_voice_runtime",value:{mode:"waiting_device",running:false,
       message:"正在等待设备握手确认",agentId:"",targetKey:voiceTarget.key}});
     voiceDispatch({type:"set_audio_bridge_pending",value:false});
+  }, [voiceTarget.key]);
+
+  useEffect(() => {
     const poller=createVoiceRuntimePoller({target:voiceTarget,invoke,
       isCurrent:()=>voiceTargetKeyRef.current===voiceTarget.key,
       publish:value=>voiceDispatch({type:"set_voice_runtime",value})});
-    poller.poll();
-    const id=setInterval(()=>poller.poll(),5000);
-    return ()=>{poller.cancel();clearInterval(id);};
-  }, [voiceTarget.key]);
+    // Legacy ensure_voice_runtime owns a service lifecycle. P4 and Wi-Fi read
+    // configuration for the displayed panel; microphone rearm is independent.
+    if (voiceTarget.kind === "legacy") {
+      void poller.poll();
+      const timer = setInterval(poller.poll, 5000);
+      return () => { clearInterval(timer); poller.cancel(); };
+    }
+    if (!monitorVoiceRuntime || voiceTarget.kind === "waiting") return () => poller.cancel();
+    if (!document.hidden) void poller.poll();
+    const stop = pollWhileVisible(poller.poll, 5000);
+    return () => { stop(); poller.cancel(); };
+  }, [monitorVoiceRuntime, voiceTarget.key]);
 
   // ---------- Button config update + OTA dispatch ----------
   const updateVoiceConfig = useCallback((patch) => {
@@ -1567,14 +1589,14 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
   // ---------- Action-menu callbacks ----------
   const onSendTest = useCallback(() => {
     const sendPromise = usb.connected
-      ? invoke("usb_send_speech", { text: "hello from pet-manager" }).then(() => ({ ok: true })).catch((err) => ({ ok: false, error: String(err) }))
+      ? invoke("usb_send_speech", { text: "你好，桌宠已连接", expectedBoardDeviceId: usb.boardDeviceId, expectedConnectionId: usb.connectionId }).then(() => ({ ok: true })).catch((err) => ({ ok: false, error: String(err) }))
       : Promise.resolve({ ok: false, error: "USB 未连接" });
     sendPromise.then((res) => {
       push(res.ok
         ? { tone: "success", title: "测试消息已发送" }
         : { tone: "error", title: "测试消息发送失败", message: res.error });
     });
-  }, [push, usb.connected]);
+  }, [push, usb.connected, usb.boardDeviceId, usb.connectionId]);
 
   const onCopyDesktopId = useCallback(() => {
     try {
@@ -1787,7 +1809,11 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
       <DeviceGuideModal
         isOpen={guideOpen}
         onClose={() => setGuideOpen(false)}
-        runtime={usb.runtime}
+        runtime={buttonPanelRuntime}
+        usb={usb}
+        wifi={wifi}
+        wifiEntry={!hasKnownRuntime && !usb.connected && wifi?.wifiConnected === true}
+        setGuideOpen={setGuideOpen}
       />
       <DeviceDiagnosticsModal
         open={diagnosticsModalOpen}

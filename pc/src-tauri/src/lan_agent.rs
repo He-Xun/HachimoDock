@@ -500,6 +500,11 @@ pub(crate) fn ensure_bubble_font(usb: &crate::usb_serial::UsbSerialManager, boar
     }, Some(&mut |id, bytes| component::send_font(&peer, boot, id, bytes, current, || require_no_usb(usb))), None, current)
 }
 
+fn panel_receipt_matches(response: &Value, board: &str, boot: &str) -> bool {
+    response["boardDeviceId"].as_str() == Some(board)
+        && response.get("bootId").is_none_or(|id| id.as_str() == Some(boot))
+}
+
 #[tauri::command]
 pub(crate) async fn lan_panel_control(
     usb_manager: tauri::State<'_, crate::usb_serial::UsbSerialManager>,
@@ -558,8 +563,8 @@ pub(crate) async fn lan_panel_control(
             return Err("设备未接受无线请求，请检查连接和设备状态。".into());
         }
         let response: Value = serde_json::from_slice(&bytes).map_err(|_| "设备返回无效数据。")?;
-        if response["boardDeviceId"].as_str() != Some(board_device_id.as_str()) {
-            return Err("设备回报身份与当前连接不一致。".into());
+        if require_no_usb(&usb).is_err() || !panel_receipt_matches(&response, &board_device_id, &expected_boot_id) {
+            return Err("设备连接已变化，本次结果待核对。请读取当前设备状态。".into());
         }
         if response["ok"].as_bool() != Some(true) {
             return Err(response["message"].as_str().unwrap_or("设备拒绝这项无线操作。").into());
@@ -1347,6 +1352,19 @@ pub(crate) fn start(app: tauri::AppHandle, usb: crate::usb_serial::UsbSerialMana
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn panel_receipt_rejects_other_boards_reboots_and_invalid_boot_fields() {
+        use super::panel_receipt_matches;
+        use serde_json::json;
+        let board = "p4-a";
+        let boot = "100000000000000a";
+        assert!(panel_receipt_matches(&json!({"boardDeviceId":board}), board, boot));
+        assert!(panel_receipt_matches(&json!({"boardDeviceId":board,"bootId":boot}), board, boot));
+        for receipt in [json!({"boardDeviceId":"p4-b"}),json!({"boardDeviceId":board,"bootId":"old"}),json!({"boardDeviceId":board,"bootId":null})] {
+            assert!(!panel_receipt_matches(&receipt, board, boot));
+        }
+    }
+
     use super::*;
 
     fn hex(data: &[u8]) -> String {

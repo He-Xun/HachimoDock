@@ -115,7 +115,7 @@ export default function CustomSpeechSettings({ active = true, showSecrets = fals
   }
 
   return <div hidden={!active}>
-    <p className="muted small">识别和合成可选不同服务，保存后该项立即生效。填写 OpenAI 兼容接口地址，使用 MiMo 兼容代理时填写完整的 /chat/completions 地址。测试会调用所选服务，可能产生费用。</p>
+    <p className="muted small">识别和合成可选不同服务，保存后该项立即生效。填写 OpenAI 兼容接口地址；使用 /chat/completions 接口时，请填写完整端点地址。测试会调用所选服务，可能产生费用。</p>
     {!ready && <div role="status">{readError || "正在读取语音配置…"}
       {readError && <button type="button" className="btn-secondary btn-sm" onClick={() => setRefresh(value => value + 1)}>重新读取</button>}
     </div>}

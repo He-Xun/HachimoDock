@@ -695,7 +695,7 @@ pub(super) fn cli(args: &[OsString]) -> Result<String, String> {
             let entry=component_library::publish_authored(&home,Path::new(source))?;
             serde_json::to_string(&entry).map_err(|e|e.to_string())
         }
-        [command] if command == "tool-info" => Ok(json!({"version":env!("CARGO_PKG_VERSION"),"protocol":2,"target":target(),"pythonPlugin":"petui-python-v1","scopedWrite":"p4-scoped-write-v1","deviceProvider":"github-account-v1","featureManifest":1,"inspection":["compatibility","first-data","install-rehearsal"]}).to_string()),
+        [command] if command == "tool-info" => Ok(json!({"version":env!("CARGO_PKG_VERSION"),"protocol":2,"target":target(),"pythonPlugin":"petui-python-v1","scopedWrite":"p4-scoped-write-v1","featureManifest":1,"inspection":["compatibility","first-data","install-rehearsal"]}).to_string()),
         [command, args @ ..] if matches!(command.to_str(), Some("compatibility" | "first-data" | "install-rehearsal")) => inspection::run(command.to_str().unwrap(), args),
         [command, args @ ..] if command == "data-link" => {
             let [runtime, report, scope @ ..] = args else { return Err(data_link::USAGE.into()); };

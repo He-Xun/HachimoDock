@@ -605,7 +605,7 @@ test("Button-selected conversations are temporary and bound to status and input 
   assert.match(sessionSync, /onSessionChange\("auto"\)/);
   assert.match(sessionSync, /p4SessionActivitySignature/);
   assert.match(sessionSync, /sessions: buildP4DeviceSessionTransportPayload\(deviceSessions\)/);
-  assert.match(sessionService, /session\?\.model[\s\S]*codex-auto-review/);
+  assert.match(sessionService, /isInternalCodexSession\(session\)/);
   assert.match(sessionFeed, /eventsInFlight/);
   assert.doesNotMatch(sessionFeed, /catch[\s\S]*sessions:\s*\[\]/);
   assert.match(sessionSync, /deviceSessionsSignature,[\s\S]*usbConnected/);
@@ -980,17 +980,12 @@ test("managed Node runtimes clear inspector options and bind the expected lifecy
   assert.match(rust, /VOICE_SERVICE_AGENT_ID_FILE_NAME/);
 });
 
-test("voice bus polling stays active in the background and skips unchanged render updates", () => {
+test("background Bridge recovery uses a fresh feed while session routing keeps polling", () => {
   const source = readSource("DeviceDashboard.jsx");
   const sessionFeed = readSource("dashboard/useAgentSessionFeed.js");
-  const statusStart = source.indexOf("// Poll voice-bus status.");
-  const runtimeStart = source.indexOf("// Poll voice-runtime.", statusStart);
-  const sessionsEnd = source.indexOf("// Reflect board-originated voice_input", runtimeStart);
-  const statusEffect = source.slice(statusStart, runtimeStart);
-  const sessionsEffect = source.slice(runtimeStart, sessionsEnd);
-
-  assert.doesNotMatch(statusEffect, /document\.visibilityState/);
-  assert.doesNotMatch(sessionFeed, /document\.visibilityState/);
+  assert.ok(source.includes("(!active || document.hidden) && agentSessionFeedFresh(selectedAgentId, 2 * P4_SESSION_EVENT_POLL_MS)"));
+  assert.match(source, /const id = setInterval\(check, 5000\)/);
+  assert.doesNotMatch(sessionFeed, /document\.(?:hidden|visibilityState)/);
   assert.match(source, /fingerprint === state\.busStatusFingerprint/);
   assert.match(sessionFeed, /fingerprint === state\.fingerprint/);
 });
@@ -1001,7 +996,8 @@ test("voice runtime polling preserves cadence, avoids overlap, and deduplicates 
   assert.match(helper, /inFlight = false/);
   assert.match(helper, /if \(!current\(\) \|\| inFlight\) return/);
   assert.match(helper, /finally \{ inFlight = false/);
-  assert.match(source, /setInterval\(\(\)=>poller\.poll\(\),5000\)/);
+  assert.match(source, /voiceTarget.kind === "legacy"[\s\S]*?setInterval\(poller.poll, 5000\)/);
+  assert.match(source, /pollWhileVisible\(poller.poll, 5000\)/);
   assert.match(source, /poller\.cancel\(\)/);
   assert.doesNotMatch(helper, /document\.visibilityState/);
   assert.match(source, /fingerprint === state\.voiceRuntimeFingerprint/);

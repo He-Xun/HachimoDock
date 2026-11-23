@@ -160,6 +160,7 @@
           "build_petui_project",
           "list_component_library",
           "import_hachiapp",
+          "import_component_edition",
           "read_component_wasm_preview",
           "open_wasm_preview",
           "tick_wasm_preview",
