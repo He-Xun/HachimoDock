@@ -14,11 +14,13 @@ The installed app is named **HachimiDock**. Developer documentation may also cal
 
 | Component | Version | Download |
 | --- | --- | --- |
-| Windows x64 | **0.1.260** | [Download installer](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_Windows-x64-setup.exe) |
-| macOS (Apple silicon) | **0.1.260** | [Download installer](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_macOS-arm64.dmg) |
-| Device firmware | **0.7.121-p4-r310 / R310** | OTA included in the desktop client · [Factory kits](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.260) |
+| Windows x64 | **0.1.261** | [Download installer](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.261/HachimiDock_0.1.261_Windows-x64-setup.exe) |
+| macOS (Apple silicon) | **0.1.261** | [Download installer](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.261/HachimiDock_0.1.261_macOS-arm64.dmg) |
+| Device firmware | **0.7.121-p4-r310 / R310** | OTA included in the desktop client · [Factory kits](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.261) |
 
-See the [0.1.260 release notes](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.260). Both installers include R310 OTA firmware for WiFi6 and Pico boards with v1 and v3 chips. Wi-Fi button and conversation-state delivery requires both the updated client and firmware. After Wi-Fi pairing, the device can disconnect from the computer's USB data connection; it still needs power, and desktop-assisted features still require the client to run. Pico firmware does not include Wi-Fi or Bluetooth. Verify downloads against the SHA-256 shown on the release page.
+Version 0.1.261 fixes press-to-talk failing to find the message field in some Antigravity conversations on macOS. Appearance and component cards keep their colors when you hover over their covers or text.
+
+See the [0.1.261 release notes](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.261). Both installers include R310 OTA firmware for WiFi6 and Pico boards with v1 and v3 chips. This release reuses the R310 firmware from 0.1.260. Devices already running the matching R310 image only need the desktop update. After Wi-Fi pairing, the device can disconnect from the computer's USB data connection; it still needs power, and desktop-assisted features still require the client to run. Pico firmware does not include Wi-Fi or Bluetooth. Verify downloads against the SHA-256 shown on the release page.
 
 Complete flashing kits are for first installation or factory recovery and erase settings, appearances and components. Match both board model and chip revision; WiFi6 and Pico, and v1 and v3, are not interchangeable. For routine upgrades, use the built-in OTA updater.
 
@@ -30,10 +32,10 @@ Prebuilt installers support Apple silicon Macs and Windows x64. The Mac package 
 
 | Board | Chip revision | R310 factory kit |
 | --- | --- | --- |
-| WiFi6 | v1 | [Download WiFi6 v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_wifi6-v1_FULL-FACTORY.zip) |
-| WiFi6 | v3 | [Download WiFi6 v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_wifi6-v3_FULL-FACTORY.zip) |
-| Pico | v1 | [Download Pico v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_pico-v1_FULL-FACTORY.zip) |
-| Pico | v3 | [Download Pico v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_pico-v3_FULL-FACTORY.zip) |
+| WiFi6 | v1 | [Download WiFi6 v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.261/HachimiDock_0.1.261_wifi6-v1_FULL-FACTORY.zip) |
+| WiFi6 | v3 | [Download WiFi6 v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.261/HachimiDock_0.1.261_wifi6-v3_FULL-FACTORY.zip) |
+| Pico | v1 | [Download Pico v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.261/HachimiDock_0.1.261_pico-v1_FULL-FACTORY.zip) |
+| Pico | v3 | [Download Pico v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.261/HachimiDock_0.1.261_pico-v3_FULL-FACTORY.zip) |
 
 ## What you can do
 
@@ -140,7 +142,7 @@ The paired hardware uses ESP32-P4, 32 MiB Flash, 32 MiB PSRAM and a 480×640 MIP
 
 ### Source and release provenance
 
-The `main` branch and `v0.1.260` tag provide the public 0.1.260 / R310 source. The [release metadata](latest-release.json) lists SHA-256 digests for installers and firmware.
+The `main` branch and `v0.1.261` tag provide the public 0.1.261 / R310 source. The [release metadata](latest-release.json) lists SHA-256 digests for installers and firmware.
 
 Resources are stored in ordinary Git; Git LFS is not required. Preserve dependency locks and choose the correct target configuration. Published binaries retain their original build contents even when `main` changes.
 
@@ -179,4 +181,4 @@ We also thank everyone who contributed development, testing, feedback and commun
 
 Home-control capabilities integrate [Xiaomi MiLoCo](https://github.com/XiaoMi/xiaomi-miloco), whose relevant works are copyrighted by Xiaomi and governed by the [Xiaomi Miloco License](licenses/Xiaomi-Miloco-LICENSE.md). This project grants no additional commercial, sublicensing or trademark rights.
 
-For project contact, see [作者 / Author](README.md#作者--author). Report bugs through Issues with versions and reproduction steps, with personal data removed. Report security issues privately under [SECURITY.md](SECURITY.md).
+For project inquiries and bug reports, use [GitHub Issues](https://github.com/ai-maker-lab/HachimoDock/issues). Include versions and reproduction steps when reporting a bug, and remove personal data before posting. Report security issues privately under [SECURITY.md](SECURITY.md).

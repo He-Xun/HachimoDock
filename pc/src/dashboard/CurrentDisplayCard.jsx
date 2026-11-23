@@ -289,7 +289,7 @@ function AgentAppearancePickerOption({ row, selected, disabled, onPick }) {
   return (
     <button
       type="button"
-      className={`agent-appearance-picker-modal__option${selected ? " is-selected" : ""}`}
+      data-card-surface="" className={`agent-appearance-picker-modal__option${selected ? " is-selected" : ""}`}
       onClick={onPick}
       disabled={disabled}
     >

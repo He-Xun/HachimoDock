@@ -2225,8 +2225,28 @@ fn valid_antigravity_conversation_url(url: &str) -> bool {
         .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
 }
 
+fn antigravity_editor_web_area<T: Clone + PartialEq>(
+    editor: &T,
+    parent: impl Fn(&T) -> Option<T>,
+    role: impl Fn(&T) -> String,
+) -> Option<T> {
+    // Chromium can place 25 AXGroups between Message input and its web area.
+    const MAX_PARENT_HOPS: usize = 64;
+    let mut chain = vec![editor.clone()];
+    for _ in 0..MAX_PARENT_HOPS {
+        let next = parent(chain.last()?)?;
+        if chain.contains(&next) { return None; }
+        match role(&next).as_str() {
+            "AXWebArea" => return Some(next),
+            "" | "AXWindow" | "AXApplication" => return None,
+            _ => chain.push(next),
+        }
+    }
+    None
+}
+
 fn antigravity_conversation(editor: &AXUIElement) -> Option<String> {
-    let web = ancestors(editor).into_iter().find(|element| element_role(element) == "AXWebArea")?;
+    let web = antigravity_editor_web_area(editor, |element| element.parent().ok(), element_role)?;
     let attribute = AXAttribute::new(&CFString::new("AXURL"));
     let value: CFType = web.attribute(&attribute).ok()?;
     let url = value.downcast::<core_foundation::url::CFURL>().map(|url| url.get_string().to_string())
@@ -4572,6 +4592,48 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_uses_the_editors_nearest_web_area_even_in_a_deep_group_tree() {
+        use super::antigravity_editor_web_area;
+        let next = |n: &usize| Some(n + 1);
+        let web_at = |n: &usize| match *n {
+            26 | 33 => "AXWebArea",
+            35 => "AXWindow",
+            _ => "AXGroup",
+        }.to_owned();
+        assert_eq!(antigravity_editor_web_area(&0, next, web_at), Some(26));
+        for depth in [64, 65] {
+            let role = |n: &usize| if *n == depth { "AXWebArea" } else { "AXGroup" }.to_owned();
+            assert_eq!(antigravity_editor_web_area(&0, next, role), (depth == 64).then_some(depth));
+        }
+        for boundary in ["AXWindow", "AXApplication", ""] {
+            let role = |n: &usize| if *n == 1 { boundary } else { "AXWebArea" }.to_owned();
+            assert_eq!(antigravity_editor_web_area(&0, next, role), None);
+        }
+        assert_eq!(antigravity_editor_web_area(&0, |n| Some(1 - n), |_| "AXGroup".into()), None);
+        assert_eq!(antigravity_editor_web_area(&0, |_| None, |_| "AXGroup".into()), None);
+    }
+
+    #[test]
+    #[ignore = "Read-only AX lookup; requires an authorized Mac and a visible Antigravity conversation"]
+    fn antigravity_live_editor_conversation_identity_is_stable() {
+        use super::*;
+        assert!(unsafe { AXIsProcessTrusted() }, "AX access required");
+        let pids = agent_application_pids(MacosAgent::Antigravity);
+        let [pid] = pids.as_slice() else { panic!("expected one Antigravity process"); };
+        let app = AXUIElement::application(*pid);
+        let window = ax_element_attribute(&app, "AXFocusedWindow").expect("Antigravity window");
+        let editors = walk_elements(&window, |e| {
+            element_role(e) == "AXTextArea" && element_is_enabled(e)
+                && antigravity_editor_label("AXTextArea", &composer_metadata(e))
+        });
+        let [editor] = editors.as_slice() else { panic!("expected one message editor"); };
+        assert!(ax_element_attribute(editor, "AXWindow").as_ref() == Some(&window));
+        let identity = antigravity_conversation(editor).expect("editor must have a local conversation route");
+        assert!(antigravity_conversation(editor).as_ref() == Some(&identity));
+        assert!(ax_element_attribute(&app, "AXFocusedWindow").as_ref() == Some(&window));
+    }
+
+    #[test]
     fn antigravity_voice_accepts_the_local_blank_and_pinned_conversation_routes() {
         use super::valid_antigravity_conversation_url;
         assert!(valid_antigravity_conversation_url("http://127.0.0.1:61190/"));
@@ -4579,6 +4641,7 @@ mod tests {
             "http://127.0.0.1:61190/c/01234567-89ab-cdef-0123-456789abcdef?project=outside-of-project"
         ));
         for url in [
+            "data:text/html,outer-shell",
             "https://example.com:61190/c/01234567-89ab-cdef-0123-456789abcdef",
             "http://127.0.0.1:61190/settings",
             "http://127.0.0.1:61190/c/abc",

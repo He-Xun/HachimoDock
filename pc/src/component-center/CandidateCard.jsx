@@ -54,7 +54,7 @@ export default function CandidateCard({
 
   return (
     <article className={cardClass} aria-current={isEnabled ? "true" : undefined}>
-      <button className="candidate-card__select" onClick={onClick} type="button" aria-label={`查看 ${component.name} 详情`}>
+      <button data-card-surface="" className="candidate-card__select" onClick={onClick} type="button" aria-label={`查看 ${component.name} 详情`}>
         <div className="candidate-card__preview">
           <ComponentCover component={component} className="candidate-card__screen" />
         </div>

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
   "product": "HachimiDock",
-  "desktopVersion": "0.1.260",
+  "desktopVersion": "0.1.261",
   "firmwareVersion": "0.7.121-p4-r310",
-  "releaseTag": "v0.1.260",
-  "releaseUrl": "https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.260",
+  "releaseTag": "v0.1.261",
+  "releaseUrl": "https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.261",
   "sourceRef": "refs/heads/main",
   "sourcePublished": true,
   "flashingTools": {
@@ -51,37 +51,37 @@
   ],
   "artifacts": [
     {
-      "file": "HachimiDock_0.1.260_macOS-arm64.dmg",
+      "file": "HachimiDock_0.1.261_macOS-arm64.dmg",
       "role": "macos",
-      "bytes": 206906026,
-      "sha256": "9916593727b1c631af2877cfbeb92d5eb97a7080cff9fca82a6045b688881762"
+      "bytes": 207031753,
+      "sha256": "838f8ddc6ade3b56dc3172c1e0e40a7f1014e195729aaab3eb520baffeddbaad"
     },
     {
-      "file": "HachimiDock_0.1.260_Windows-x64-setup.exe",
+      "file": "HachimiDock_0.1.261_Windows-x64-setup.exe",
       "role": "windows",
-      "bytes": 150290829,
-      "sha256": "627c5b7f8c8cef8d849ca3c5c8dca32b72c9319548865aa14abc412534353019"
+      "bytes": 150330611,
+      "sha256": "4fe7df8e47c00e2ffc0320f7dc04370f0121d4c4629290f50b141ceada6a89de"
     },
     {
-      "file": "HachimiDock_0.1.260_pico-v3_FULL-FACTORY.zip",
+      "file": "HachimiDock_0.1.261_pico-v3_FULL-FACTORY.zip",
       "role": "factory-v3-pico",
       "bytes": 27655089,
       "sha256": "c5cb7582688702691f710f2392c9bb1a73e16e203a44c81461f5f263759595ae"
     },
     {
-      "file": "HachimiDock_0.1.260_wifi6-v3_FULL-FACTORY.zip",
+      "file": "HachimiDock_0.1.261_wifi6-v3_FULL-FACTORY.zip",
       "role": "factory-v3",
       "bytes": 28376593,
       "sha256": "79ed6d2f53e0d6b9d401ae6701413361a29f06fc326583055091566ec0467442"
     },
     {
-      "file": "HachimiDock_0.1.260_wifi6-v1_FULL-FACTORY.zip",
+      "file": "HachimiDock_0.1.261_wifi6-v1_FULL-FACTORY.zip",
       "role": "factory-v1",
       "bytes": 28391166,
       "sha256": "3b89cab5f2e486881498173424ba54798b7597a77416a0426a8f7bceda99dffd"
     },
     {
-      "file": "HachimiDock_0.1.260_pico-v1_FULL-FACTORY.zip",
+      "file": "HachimiDock_0.1.261_pico-v1_FULL-FACTORY.zip",
       "role": "factory-v1-pico",
       "bytes": 27641136,
       "sha256": "802523fecbc747ff9d6f0acaecae415c655061037d920eca5a74015f8860056b"

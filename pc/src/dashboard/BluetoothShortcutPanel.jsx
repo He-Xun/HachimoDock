@@ -284,7 +284,7 @@ export default function BluetoothShortcutPanel({ usb, wifi, board, active = true
                   </div>
                   <div className={`board-button-control-group__rows board-button-control-group__rows--${group.gestures.length}`}>
                     {group.gestures.map(gesture => (
-                      <div className={`board-button-control-field${slot === gesture.slot ? " is-hovered" : ""}`} key={gesture.slot}>
+                      <div className={`board-button-control-field${slot === gesture.slot ? " is-selected" : ""}`} key={gesture.slot}>
                         <span className="board-button-control-field__head"><strong>{gesture.label}</strong></span>
                         <Button size="small" aria-expanded={canEdit && slot === gesture.slot}
                           disabled={pending || ((dirty || capture) && slot !== gesture.slot)}

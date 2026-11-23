@@ -185,7 +185,7 @@ test("gallery card previews fit width while Codex imports show the whole subject
   assert.match(css, /\.appearance-card-preview\s*\{[\s\S]*height:\s*clamp\(120px,\s*11vw,\s*170px\);/);
   assert.match(css, /\.appearance-card-preview\s*\{[\s\S]*padding:\s*12px\s+18px\s+16px;/);
   assert.match(css, /\.appearance-card-preview\s*\{[\s\S]*background:\s*#000;/);
-  assert.match(css, /\.appearance-card--clickable:hover \.appearance-channel-preview__media,[\s\S]*transform:\s*none;/);
+  assert.doesNotMatch(css, /\.appearance-card--clickable:hover [^{]*\.appearance-channel-preview__media\s*\{[^}]*transform:\s*scale/);
 });
 
 test("codex import rows use backend-generated preview images instead of local file backgrounds", () => {

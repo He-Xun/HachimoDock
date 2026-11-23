@@ -2129,7 +2129,7 @@ function CreateNewCard({ onClick }) {
   return (
     <button
       type="button"
-      className="candidate-card candidate-card--create"
+      data-card-surface="" className="candidate-card candidate-card--create"
       onClick={onClick}
     >
       <div className="candidate-card__preview candidate-card__preview--create">

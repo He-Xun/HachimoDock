@@ -34,7 +34,7 @@ function CardCollapsible({ title, summary, defaultOpen = false, children }) {
     >
       <button
         type="button"
-        className="card__header card__header--toggle"
+        data-card-surface="" className="card__header card__header--toggle"
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
       >

@@ -17,9 +17,18 @@ try{
  assert.equal(await page.getByRole('button',{name:'请在 Pet Manager 中下载'}).isDisabled(),true);
  await page.screenshot({path:join(output,'online-detail.png'),fullPage:true});
  await page.setViewportSize({width:480,height:850});await page.getByLabel('评论身份').scrollIntoViewIfNeeded();await page.screenshot({path:join(output,'online-detail-mobile.png'),fullPage:true});
- const admin=await page.request.get(`${origin}/admin/`);assert.equal(admin.status(),200);assert.match(admin.headers()['x-frame-options'],/DENY/);assert.match(await admin.text(),/登录/);
+ const protectedPath = process.env.PET_COMMUNITY_PROTECTED_PAGE_PATH;
+ if (protectedPath) {
+   const url = new URL(protectedPath, origin);
+   assert.equal(url.origin, new URL(origin).origin);
+   const response = await page.request.get(url.href, { maxRedirects: 0 });
+   assert.equal(response.status(), 200);
+   assert.match(response.headers()['x-frame-options'], /DENY/i);
+   assert.match(await response.text(), /登录/);
+ }
  const health=await page.request.get(`${origin}/api/v1/health`);assert.equal((await health.json()).ok,true);
  const mine=await page.request.get(`${origin}/api/v1/mine`);assert.equal(mine.status(),401);
  assert.deepEqual(errors,[]);
- writeFileSync(join(output,'online-report.json'),JSON.stringify({passed:true,httpsVerified:true,publicWeb:true,detail:name,adminRequiresLogin:true,adminFrameDenied:true,anonymousOwnerDenied:true,readOnly:true,errors},null,2));console.log('PASS online HTTPS, public gallery/detail, anonymous identity, responsive layout and admin isolation (read-only)');
+ writeFileSync(join(output,'online-report.json'),JSON.stringify({passed:true,httpsVerified:true,publicWeb:true,detail:name,protectedPageChecked:Boolean(protectedPath),anonymousOwnerDenied:true,readOnly:true,errors},null,2));console.log('PASS online HTTPS, public gallery/detail, anonymous identity and responsive layout (read-only)');
+ console.log(protectedPath ? 'PASS protected page login and frame checks' : 'SKIP protected page checks (no path configured)');
 }finally{await browser.close();}

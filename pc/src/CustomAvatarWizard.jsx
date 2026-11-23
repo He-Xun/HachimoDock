@@ -475,7 +475,7 @@ export function AvatarWizardStep1({
     <div className="ca-card">
       <h3>{title}</h3>
       <div
-        className="dropzone"
+        data-card-surface="" className="dropzone"
         ref={imageImport.zoneRef}
         role="button"
         tabIndex={0}
@@ -606,7 +606,7 @@ export function AvatarWizardStep2({
         {VIDEO_PROVIDERS.map((item) => (
           <button
             key={item.id}
-            className={`provider-card ${item.id === providerId ? "active" : ""}`}
+            data-card-surface="" className={`provider-card ${item.id === providerId ? "active" : ""}`}
             onClick={() => onPickProvider(item.id)}
             type="button"
           >

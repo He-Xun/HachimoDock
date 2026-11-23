@@ -465,7 +465,7 @@ export default function VoiceAssistantPanel({
       <div className="voice-panel__advanced-grid">
         <button
           type="button"
-          className="voice-panel__advanced voice-panel__api-settings"
+          data-card-surface="" className="voice-panel__advanced voice-panel__api-settings"
           onClick={onOpenApiSettings}
         >
           <span className="voice-panel__advanced-summary">

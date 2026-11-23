@@ -2852,10 +2852,6 @@ select:focus-visible {
   display: none;
 }
 
-.voice-panel__advanced-summary:hover {
-  background: var(--bg-soft);
-}
-
 .voice-panel__advanced[open] > .voice-panel__advanced-summary {
   border-bottom: 0;
   background: var(--bg-soft);
@@ -3376,11 +3372,6 @@ select:focus-visible {
     box-shadow 0.14s ease;
 }
 
-.agent-item:hover {
-  border-color: var(--line-strong);
-  background: #fcfcfd;
-}
-
 .agent-item--enabled {
   border-color: rgba(255, 103, 0, 0.18);
   background: linear-gradient(180deg, #fffaf7 0%, var(--surface) 100%);
@@ -3708,7 +3699,6 @@ select:focus-visible {
   min-height: auto;
 }
 
-.component-store-card:hover,
 .component-store-card.is-selected {
   border-color: rgba(255, 103, 0, 0.38);
   box-shadow: 0 10px 28px rgba(255, 103, 0, 0.1);
@@ -4541,7 +4531,6 @@ select:focus-visible {
     transform 0.14s ease;
 }
 
-.component-package-card:hover,
 .component-package-card.is-selected {
   transform: translateY(-1px);
   border-color: var(--line-strong);
@@ -5286,10 +5275,6 @@ select:focus-visible {
   cursor: pointer;
 }
 
-.desktop-pet-channel-card__trigger:hover {
-  background: rgba(255, 103, 0, 0.035);
-}
-
 .desktop-pet-channel-expanded {
   display: grid;
   grid-template-columns: 132px minmax(0, 1fr) minmax(190px, 240px) minmax(132px, 150px);
@@ -5648,11 +5633,6 @@ select:focus-visible {
     box-shadow 0.14s ease;
 }
 
-.agent-appearance-picker-modal__option:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
 .agent-appearance-picker-modal__option.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
@@ -5827,11 +5807,6 @@ select:focus-visible {
   cursor: pointer;
   text-align: left;
   transition: border-color 160ms ease, background 160ms ease;
-}
-
-.setup-agent-channel-card:hover {
-  border-color: rgba(255, 103, 0, 0.32);
-  background: var(--bg-soft);
 }
 
 .setup-agent-channel-card:focus-visible {
@@ -7384,13 +7359,16 @@ select:focus-visible {
     transform var(--motion-fast) var(--ease-standard);
 }
 
-.appearance-card--clickable:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-md);
+/* Card surfaces retain their current palette when the pointer moves over them. */
+.appearance-card--clickable:hover,
+.state-card:hover,
+.builtin-card:hover,
+.component-store-card:not(.component-store-card--empty-hint):hover,
+.component-package-card:hover,
+.community-source:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
-.appearance-card--clickable:hover .appearance-channel-preview__media,
 .appearance-card--clickable:focus-visible .appearance-channel-preview__media {
   transform: none;
 }
@@ -7674,7 +7652,6 @@ select:focus-visible {
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.dropzone:hover,
 .dropzone.dragover {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -7722,10 +7699,6 @@ select:focus-visible {
   text-align: center;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.provider-card:hover {
-  border-color: var(--accent);
 }
 
 .provider-card.active {
@@ -8336,12 +8309,6 @@ select:focus-visible {
     transform var(--motion-fast) var(--ease-standard);
 }
 
-.state-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
-}
-
 .state-card.active {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -8569,16 +8536,8 @@ select:focus-visible {
   background: var(--surface);
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
-.codex-pet-row:hover {
-  border-color: var(--line-strong);
-  background: var(--surface-muted);
-}
 .codex-pet-row--new {
   border-color: var(--accent-ring);
-  background: var(--accent-soft);
-}
-.codex-pet-row--new:hover {
-  border-color: var(--accent);
   background: var(--accent-soft);
 }
 .codex-pet-preview {
@@ -8727,12 +8686,6 @@ select:focus-visible {
   transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
 
-.creation-source-card:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 8px 20px rgba(255, 95, 21, 0.1);
-}
-
 .creation-source-card:focus-visible {
   outline: none;
   box-shadow: 0 0 0 4px var(--accent-ring);
@@ -8788,11 +8741,6 @@ select:focus-visible {
   color: var(--text-muted);
   text-align: center;
   cursor: pointer;
-}
-
-.video-upload-modal__drop:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
 }
 
 .video-upload-modal__drop strong {
@@ -9012,12 +8960,6 @@ select:focus-visible {
     box-shadow 0.14s ease,
     background-color 0.14s ease;
   color: var(--text);
-}
-.community-source:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
 }
 .community-source__icon {
   flex-shrink: 0;
@@ -10519,11 +10461,6 @@ select:focus-visible {
   overflow: hidden;
   transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
-.builtin-card:hover {
-  border-color: rgba(255, 103, 0, 0.32);
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
-  transform: translateY(-1px);
-}
 .builtin-card.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring), 0 8px 24px rgba(255, 103, 0, 0.12);
@@ -10700,10 +10637,6 @@ select:focus-visible {
 .builtin-card[data-widget="tomato-clock"] {
   background: linear-gradient(180deg, #fff3f2 0%, #ffffff 56%);
 }
-.builtin-card[data-widget="tomato-clock"]:hover {
-  border-color: rgba(226, 62, 62, 0.55);
-  box-shadow: 0 4px 14px rgba(226, 62, 62, 0.10);
-}
 .builtin-card[data-widget="tomato-clock"].is-selected {
   border-color: #e23e3e;
   box-shadow: 0 0 0 2px rgba(226, 62, 62, 0.16), 0 6px 18px rgba(226, 62, 62, 0.10);
@@ -10715,10 +10648,6 @@ select:focus-visible {
 /* 喝水提醒: 海洋蓝 ocean */
 .builtin-card[data-widget="drink-reminder"] {
   background: linear-gradient(180deg, #f0f7ff 0%, #ffffff 56%);
-}
-.builtin-card[data-widget="drink-reminder"]:hover {
-  border-color: rgba(49, 130, 206, 0.55);
-  box-shadow: 0 4px 14px rgba(49, 130, 206, 0.10);
 }
 .builtin-card[data-widget="drink-reminder"].is-selected {
   border-color: #3182ce;
@@ -10800,10 +10729,6 @@ select:focus-visible {
 .builtin-card[data-widget="token-usage"] {
   background: linear-gradient(180deg, #f6f3ff 0%, #ffffff 56%);
 }
-.builtin-card[data-widget="token-usage"]:hover {
-  border-color: rgba(124, 58, 237, 0.55);
-  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.10);
-}
 .builtin-card[data-widget="token-usage"].is-selected {
   border-color: #7c3aed;
   box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.16), 0 6px 18px rgba(124, 58, 237, 0.10);
@@ -10877,11 +10802,6 @@ select:focus-visible {
   background: transparent;
   border: 1px dashed var(--line);
   box-shadow: none;
-}
-.component-store-card--empty-hint:hover {
-  border-color: var(--line);
-  box-shadow: none;
-  transform: none;
 }
 .component-store-card--empty-hint .builtin-card__select {
   cursor: default;
@@ -12299,7 +12219,8 @@ select:focus-visible {
     box-shadow 120ms ease;
 }
 
-.board-button-control-field.is-hovered {
+.board-button-panel__workspace:has(.board-button-panel__left:hover, .board-button-panel__left :focus-visible) .board-button-control-field.is-hovered,
+.board-button-control-field.is-selected {
   border-color: var(--accent-ring);
   background: color-mix(in srgb, var(--accent-soft) 36%, var(--surface));
   box-shadow: none;
@@ -12872,11 +12793,6 @@ select:focus-visible {
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.candidate-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-sm);
-}
-
 .candidate-card--enabled {
   border-color: color-mix(in srgb, var(--success) 58%, var(--line));
   background:
@@ -12884,10 +12800,6 @@ select:focus-visible {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--success) 15%, transparent),
     var(--shadow-sm);
-}
-
-.candidate-card--enabled:hover {
-  border-color: var(--success);
 }
 
 .candidate-card__select {
@@ -13048,22 +12960,12 @@ select:focus-visible {
   background: var(--bg-soft);
 }
 
-.candidate-card--create:hover {
-  border-style: dashed;
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
 .candidate-card__preview--create {
   display: flex;
   align-items: center;
   justify-content: center;
   aspect-ratio: 4 / 3;
   color: var(--text-muted);
-}
-
-.candidate-card--create:hover .candidate-card__preview--create {
-  color: var(--accent);
 }
 
 /* preview modal */
@@ -13959,10 +13861,6 @@ select:focus-visible {
   text-align: left;
 }
 
-.formosa-picker__option:hover {
-  border-color: var(--accent);
-}
-
 .formosa-picker__option.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-ring);
@@ -14045,11 +13943,6 @@ select:focus-visible {
   color: var(--text);
   text-align: left;
   cursor: pointer;
-}
-
-.firmware-update-modal__picker:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
 }
 
 .firmware-update-modal__picker:disabled {

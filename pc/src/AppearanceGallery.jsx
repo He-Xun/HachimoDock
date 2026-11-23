@@ -661,7 +661,7 @@ function CreationSourceModal({
               <button
                 key={option.key}
                 type="button"
-                className="creation-source-card"
+                data-card-surface="" className="creation-source-card"
                 onClick={option.action}
               >
                 <span className="creation-source-card__icon">{option.icon}</span>
@@ -1114,7 +1114,7 @@ function CommunityImportModal({ importingId, importError, onClose, onImport }) {
                         <button
                           key={src.id}
                           type="button"
-                          className="community-source"
+                          data-card-surface="" className="community-source"
                           onClick={() => openSource(src.url)}
                         >
                           <div className="community-source__icon">
@@ -1515,7 +1515,7 @@ function AppearanceCard({
       }}
     >
       <div
-        className={"appearance-channel-preview appearance-card-preview" + (isCodex ? " appearance-card-preview--codex" : "")}
+        data-card-surface="" className={"appearance-channel-preview appearance-card-preview" + (isCodex ? " appearance-card-preview--codex" : "")}
         role="button"
         aria-label={`查看${row.name}的形象详情`}
         tabIndex={0}
@@ -1536,7 +1536,7 @@ function AppearanceCard({
       </div>
       <div className="appearance-card-body">
         <div
-          className="appearance-card-main"
+          data-card-surface="" className="appearance-card-main"
           role="button"
           tabIndex={0}
           onClick={() => onOpenDetail?.(row.id)}

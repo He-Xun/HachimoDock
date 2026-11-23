@@ -200,7 +200,7 @@ export default function FirmwareUpdateModal({
         <div className="modal-body firmware-update-modal__body">
           <button
             type="button"
-            className="firmware-update-modal__picker"
+            data-card-surface="" className="firmware-update-modal__picker"
             onClick={selectFirmware}
             disabled={!canSelect || Boolean(running) || choosing}
           >

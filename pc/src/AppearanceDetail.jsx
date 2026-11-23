@@ -772,7 +772,7 @@ export default function AppearanceDetail({ appearanceId, boardDeviceId = "", wif
                     <button
                       key={familyRecord.family}
                       type="button"
-                      className={`state-card${isActive ? " active" : ""}`}
+                      data-card-surface="" className={`state-card${isActive ? " active" : ""}`}
                       aria-pressed={isActive}
                       onClick={() => setActiveFamily(familyRecord.family)}
                     >

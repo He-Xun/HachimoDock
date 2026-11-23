@@ -403,7 +403,7 @@ function AgentAppearancePickerModal({
               <button
                 type="button"
                 key={row.id}
-                className={`formosa-picker__option${selectedId === row.id ? " is-selected" : ""}`}
+                data-card-surface="" className={`formosa-picker__option${selectedId === row.id ? " is-selected" : ""}`}
                 onClick={() => setSelectedId(row.id)}
                 disabled={syncing}
               >

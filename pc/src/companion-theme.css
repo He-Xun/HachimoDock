@@ -461,7 +461,6 @@ dialog.devin-config-dialog {
 .creation-source-grid .creation-source-card {
   border-radius: 6px;
 }
-.creation-source-grid .creation-source-card:hover,
 .ca-tabs .ca-tab.active {
   border-color: var(--accent-action);
 }
@@ -481,13 +480,13 @@ dialog.devin-config-dialog {
   .detail-page-header { flex-wrap: wrap; }
 }
 
-/* Shared interaction colors for the desktop shell, including modal portals. */
+/* Card-sized hit targets keep their own surface and state colors. Buttons inside them still use the shared action hover. */
 :is(.btn-secondary, .button--secondary, .btn-ghost, .button--ghost,
     .icon-btn, .dashboard-status-bar__scan-btn, .dashboard-actions-menu__trigger) {
   color: var(--accent-ink);
 }
-.app-shell :is(button, [role="button"], [role="menuitem"], summary, a):hover:not(:disabled):not([aria-disabled="true"]),
-.modal-backdrop button:hover:not(:disabled) {
+.app-shell :is(button, [role="button"], [role="menuitem"], :where(.home-voice-guide) summary, a):not(:where([data-card-surface])):hover:not(:disabled):not([aria-disabled="true"]),
+.modal-backdrop button:not(:where([data-card-surface])):hover:not(:disabled) {
   color: var(--accent-ink);
   background-color: var(--accent-soft);
 }
