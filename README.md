@@ -248,7 +248,8 @@ Release 页面显示各附件的 SHA-256；完整烧录包内部另含镜像和�
 
 贡献者 / Contributors：Wanzheng Liu、Zinuo Tian。
 
-- 项目联系与问题反馈：[GitHub Issues](https://github.com/ai-maker-lab/HachimoDock/issues)
+- 📧 邮箱：avalon.ty@gmail.com
+- 问题反馈：[GitHub Issues](https://github.com/ai-maker-lab/HachimoDock/issues)
 - 💬 微信交流群：扫描下方二维码加入
 
 <table>

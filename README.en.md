@@ -181,4 +181,4 @@ We also thank everyone who contributed development, testing, feedback and commun
 
 Home-control capabilities integrate [Xiaomi MiLoCo](https://github.com/XiaoMi/xiaomi-miloco), whose relevant works are copyrighted by Xiaomi and governed by the [Xiaomi Miloco License](licenses/Xiaomi-Miloco-LICENSE.md). This project grants no additional commercial, sublicensing or trademark rights.
 
-For project inquiries and bug reports, use [GitHub Issues](https://github.com/ai-maker-lab/HachimoDock/issues). Include versions and reproduction steps when reporting a bug, and remove personal data before posting. Report security issues privately under [SECURITY.md](SECURITY.md).
+For project inquiries, see the [author’s contact email](README.md#作者--author). For bug reports, use [GitHub Issues](https://github.com/ai-maker-lab/HachimoDock/issues). Include versions and reproduction steps when reporting a bug, and remove personal data before posting. Report security issues privately under [SECURITY.md](SECURITY.md).
