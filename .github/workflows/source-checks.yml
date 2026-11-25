@@ -199,7 +199,7 @@ jobs:
           /usr/lib/llvm-20/bin/clang --version
           /usr/lib/llvm-20/bin/wasm-ld --version
           echo /usr/lib/llvm-20/bin >> "$GITHUB_PATH"
-      - run: python -m pip install Pillow pytest platformio==6.1.19
+      - run: python -m pip install Pillow pytest platformio==6.1.19 esptool==5.4.0
       - name: Check PetUI authoring and package handling
         run: python -m pytest -q pc/skills/petui/scripts pc/tests/test_petui_package_traversal.py
       - name: Restore locked SDK downloads
