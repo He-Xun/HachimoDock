@@ -43,11 +43,15 @@ HachimoDock（哈基米机）是一台与电脑协作的桌面小伙伴：让 AI
 
 | 项目 | 版本 | 下载 |
 | --- | --- | --- |
-| Windows x64 | **0.1.260** | [下载安装包](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_Windows-x64-setup.exe) |
-| macOS Apple silicon | **0.1.260** | [下载安装包](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_macOS-arm64.dmg) |
-| 配套设备固件 | **0.7.121-p4-r310 / R310** | 客户端内置 OTA · [完整烧录包](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.260) |
+| Windows x64 | **0.1.265** | [下载安装包](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.265/HachimiDock_0.1.265_Windows-x64-setup.exe) |
+| macOS Apple silicon | **0.1.265** | [下载安装包](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.265/HachimiDock_0.1.265_macOS-arm64.dmg) |
+| 配套设备固件 | **0.7.124-p4-r313 / R313** | 客户端内置 OTA · [完整烧录包](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.265) |
 
-更新说明见 [0.1.260 发布页](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.260)。客户端内置 WiFi6 与 Pico 的 v1、v3 四种 R310 OTA 固件；Wi-Fi 按键与对话状态同步需要同时更新客户端和固件。Wi-Fi 配对后可脱离电脑 USB 数据连接，设备仍需供电，电脑协同功能仍需管理端运行；Pico 固件不包含 Wi-Fi／蓝牙。下载后可核对 Release 页面显示的 SHA-256。
+最多可跟随三个 Agent。宠物主屏上左右拨动摇杆可切换当前 Agent，上下拨动可查看会话气泡。各 Agent 共用当前桌宠形象。
+
+Cursor 支持独立跟随和长按 1 键语音输入。本版也改进了切回 WorkBuddy 时的任务气泡、MiMo Desktop 的连续对话，以及 Devin 回复完成后的状态显示。
+
+更新说明见 [0.1.265 发布页](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.265)。客户端内置 WiFi6 与 Pico 的 v1、v3 四种 R313 OTA 固件。Wi-Fi 配对后可脱离电脑 USB 数据连接，设备仍需供电，电脑协同功能仍需管理端运行；Pico 固件不包含 Wi-Fi／蓝牙。下载后可核对 Release 页面显示的 SHA-256。
 
 完整烧录包用于新设备或恢复出厂，会清除设置、形象和组件；请同时核对板型和芯片修订版，WiFi6 与 Pico、v1 与 v3 不可混刷。日常升级优先使用客户端内置 OTA。
 
@@ -57,12 +61,12 @@ HachimoDock（哈基米机）是一台与电脑协作的桌面小伙伴：让 AI
 
 **第一次烧录，建议直接用 ChatGPT、WorkBuddy 等 AI 工具协助。** 下载并解压下表中与设备匹配的完整包，把包内的 `README-FLASHING-CN.md` 交给工具，并告诉它你的电脑系统和板型。可以这样问：「请先帮我核对连接的设备和固件包是否匹配，再按这份说明带我完成首次烧录，并检查写入结果。」
 
-| 板型 | 芯片修订版 | R310 完整烧录包 |
+| 板型 | 芯片修订版 | R313 完整烧录包 |
 | --- | --- | --- |
-| WiFi6 | v1 | [下载 WiFi6 v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_wifi6-v1_FULL-FACTORY.zip) |
-| WiFi6 | v3 | [下载 WiFi6 v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_wifi6-v3_FULL-FACTORY.zip) |
-| Pico | v1 | [下载 Pico v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_pico-v1_FULL-FACTORY.zip) |
-| Pico | v3 | [下载 Pico v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.260/HachimiDock_0.1.260_pico-v3_FULL-FACTORY.zip) |
+| WiFi6 | v1 | [下载 WiFi6 v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.265/HachimiDock_0.1.265_wifi6-v1_FULL-FACTORY.zip) |
+| WiFi6 | v3 | [下载 WiFi6 v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.265/HachimiDock_0.1.265_wifi6-v3_FULL-FACTORY.zip) |
+| Pico | v1 | [下载 Pico v1](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.265/HachimiDock_0.1.265_pico-v1_FULL-FACTORY.zip) |
+| Pico | v3 | [下载 Pico v3](https://github.com/ai-maker-lab/HachimoDock/releases/download/v0.1.265/HachimiDock_0.1.265_pico-v3_FULL-FACTORY.zip) |
 
 ## 你可以用它做什么
 
@@ -70,7 +74,7 @@ HachimoDock（哈基米机）是一台与电脑协作的桌面小伙伴：让 AI
 
 设备用宠物动画和任务气泡显示思考、执行、等待、完成及错误状态。选择正在跟随的 Agent 或会话，就能在电脑之外保留一个简洁的工作状态窗口。
 
-当前适配 **ChatGPT（Codex）、Claude、OpenClaw、MiMo Desktop / MiMoCode、WorkBuddy 和 DeepSeek Harness**。不同适配器提供的状态和操作能力不同；状态跟随不代表支持所有应用的语音输入或对话切换。
+当前适配 **ChatGPT（Codex）、Claude、OpenClaw、MiMo Desktop / MiMoCode、WorkBuddy、DeepSeek Harness、Cursor 和 Devin**。不同适配器提供的状态和操作能力不同；状态跟随不代表支持所有应用的语音输入或对话切换。
 
 跟随 WorkBuddy 或 DeepSeek Harness 时，可以在设备上看到当前会话标题和任务状态。无论通过 USB 还是 Wi-Fi 连接，任务气泡都使用 MiSans Medium，标题 32px、正文 24px。
 
@@ -135,7 +139,8 @@ USB 客户端在线时优先走 USB，接管时会结束正在进行的 Wi-Fi �
 | SW2 长按 | 开始或结束实时对话 |
 | SW3 短按 | 返回或取消 |
 | SW3 长按 | 打开设备系统设置 |
-| 摇杆方向 | 选择会话、组件或执行组件映射动作 |
+| 摇杆左右 | 在宠物主屏切换跟随的 Agent，保留当前形象、人设和声音 |
+| 摇杆上下 | 在宠物主屏浏览当前 Agent 的会话气泡 |
 
 这些是出厂默认值，用户配置优先。语音确认发送不等于批准 Agent 的工具权限请求。WorkBuddy 的操作边界见[专门说明](pc/docs/workbuddy.md)。
 
@@ -143,7 +148,7 @@ macOS 安装受阻时，先检查下载来源和校验值，再按系统“隐�
 
 ### 新设备或恢复出厂
 
-[v0.1.260 Release](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.260) 提供 WiFi6、Pico 两种底板各自的 v1 和 v3 完整烧录包。包内包含 Bootloader、应用固件、形象、组件及双平台烧录工具。请同时核对板型和实际芯片修订版；微雪 ESP32-P4-WIFI6-M 的 M 不代表芯片版本。同一芯片的固件由 Windows/macOS 共用。完整镜像会覆盖设备现有数据。
+[v0.1.265 Release](https://github.com/ai-maker-lab/HachimoDock/releases/tag/v0.1.265) 提供 WiFi6、Pico 两种底板各自的 v1 和 v3 完整烧录包。包内包含 Bootloader、应用固件、形象、组件及双平台烧录工具。请同时核对板型和实际芯片修订版；微雪 ESP32-P4-WIFI6-M 的 M 不代表芯片版本。同一芯片的固件由 Windows/macOS 共用。完整镜像会覆盖设备现有数据。
 
 **v1 与 v3 烧录包不可互刷，具体版本可以咨询客服进行确认。** 包内脚本需要 Python 3.10+，自动安装 esptool **5.4.0**。屏幕连接 **DSI**，不是 CSI；请断电后插拔排线。详细版本和步骤见 [固件构建与烧录指南](firmware/BUILD.md)。
 
@@ -168,11 +173,11 @@ macOS 安装受阻时，先检查下载来源和校验值，再按系统“隐�
 
 ## 硬件方案
 
-### 原屏缺货与替代屏幕方案
+### 备用屏幕与转接板
 
-原方案屏幕目前缺货，可参考社区作者 fosen 的[哈基米机屏幕转接板方案](https://oshwhub.com/fosen/project_tzekpmhv)，用于适配另一款 2.8 英寸触摸屏。项目页提供转接板设计、配套外壳模型，以及 HD28091C40-V1 结构图和屏幕初始化配置附件。
+原配屏缺货时，可选用项目页列出的触摸屏或非触摸屏。两款屏幕各有对应的 3MF 外壳打印文件，请先选屏，再下载匹配的模型。[备用屏选型、转接板和 3MF 文件](https://oshwhub.com/team_dklrqqse/project_zzmhvogr)
 
-替换时请按该项目的屏幕型号、转接板、排线、外壳及初始化配置配套选择。目前尚未在这款替代屏上完成实机验证，不能仅凭同为 2.8 英寸判断可直接替换。复刻资料和更新以该社区项目页为准。
+转接板连接 ESP32-P4 的 MIPI-DSI 接口，集成固定亮度背光驱动，并预留 6 针触摸接口。主板与转接板之间使用 **22 针、0.5 mm 间距的异向 FPC 排线**，两端金属触点朝向相反。断电后，按板上标记将主板接到 J0101、屏幕接到 J0102。
 
 本仓库给出软件和固件配套；PCB、BOM、硬件装配和复刻资料请看：
 [OSHWHub 硬件端页面](https://oshwhub.com/eda_gqvzlprk/project_cnbmkbjc#3-%E7%A1%AC%E4%BB%B6%E5%A4%8D%E5%88%BB)。
@@ -207,7 +212,7 @@ macOS 安装受阻时，先检查下载来源和校验值，再按系统“隐�
 
 ### 源码与发布对应关系
 
-`main` 和 `v0.1.260` 标签提供 0.1.260 / R310 的公开源码。安装包和固件的 SHA-256 见 [发布元数据](latest-release.json)。
+[v0.1.265](https://github.com/ai-maker-lab/HachimoDock/tree/v0.1.265) 标签提供 0.1.265 / R313 的公开源码。安装包和固件的 SHA-256 见 [发布元数据](https://github.com/ai-maker-lab/HachimoDock/blob/v0.1.265/latest-release.json)。
 
 资源保存在普通 Git 中，克隆不依赖 Git LFS。构建以锁定依赖和目标平台配置为准；不同发布包的源码对应关系以各 Release 说明为准。自行编译请查阅下列构建文档，并按实际板型选择配置。
 
@@ -247,6 +252,7 @@ Release 页面显示各附件的 SHA-256；完整烧录包内部另含镜像和�
 贡献者 / Contributors：Wanzheng Liu、Zinuo Tian。
 
 - 📧 邮箱：avalon.ty@gmail.com
+- 问题反馈：[GitHub Issues](https://github.com/ai-maker-lab/HachimoDock/issues)
 - 💬 微信交流群：扫描下方二维码加入
 
 <table>
