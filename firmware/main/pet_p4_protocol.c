@@ -45,6 +45,9 @@
 #include "pet_p4_json_source.h"
 #include "mbedtls/base64.h"
 #include "bsp/display.h"
+#if BSP_LCD_PANEL_AUTO
+#include "pet_p4_lcd.h"
+#endif
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
 #include "esp_log.h"
@@ -4235,6 +4238,8 @@ void pet_p4_lan_apply(pet_p4_runtime_state_t *state, const char *source,
     handle_state_topic(state, topic, status);
   }
   if (sessions) handle_session_current(state, sessions);
+  else if (source && source[0] && !state->current_session_agent[0])
+    copy_text(state->current_session_agent, sizeof(state->current_session_agent), source);
   if (speech) handle_speech(state, speech);
   state->last_update_ms += 1;
 }
@@ -4466,6 +4471,14 @@ bool pet_p4_handle_line_with_reply(
     cJSON *identity=request&&uptime>=0?pet_evidence_identity(&g_boot_identity,request,state->board_device_id,PET_P4_BUILD_ID,PET_P4_BUILD_GIT_SHA,elf,PET_P4_BUILD_DIRTY!=0,PET_P4_PROTOCOL_SCHEMA,(uint64_t)uptime):NULL;
     if(identity && g_factory_board_model) cJSON_AddStringToObject(identity,"hardwareBoardModel",g_factory_board_model);
     else if(identity && pet_p4_is_wifi6_hardware()) cJSON_AddStringToObject(identity,"hardwareBoardModel","wifi6");
+#if BSP_LCD_PANEL_AUTO
+    if (identity) {
+      cJSON_AddStringToObject(identity, "lcdPanel", pet_p4_lcd_panel_name());
+      cJSON_AddStringToObject(identity, "lcdSelection", pet_p4_lcd_selection());
+    }
+    if (identity && pet_p4_lcd_panel_model() == PET_LCD_PANEL_NV3049)
+      cJSON_AddBoolToObject(identity, "prepareDisplayForFlash", true);
+#endif
     if(identity)send_topic_payload(send_line,ctx,"debug/identity",identity);
     else send_protocol_ack(send_line,ctx,topic,payload,false,"identity_unavailable","bounded identity request or identity unavailable");
   } else if (strcmp(topic, "approval/cancel") == 0) {

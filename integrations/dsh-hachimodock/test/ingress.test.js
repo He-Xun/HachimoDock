@@ -15,7 +15,9 @@ const { createAgentSessionBus } = require('../../../pc/src-tauri/bridge/packages
 
 test('native discovery wires the same DSH_HOME and Windows USERPROFILE contract as the installer', () => {
   const rust = fs.readFileSync(path.resolve(__dirname, '../../../pc/src-tauri/src/lib.rs'), 'utf8')
-  const detection = rust.slice(rust.indexOf('fn find_dsh_profile_dir('), rust.indexOf('fn detect_hermes('))
+  const functions = rust.match(/^fn (?:find_dsh_profile_dir|detect_dsh|detect_dsh_with_home)\([^]*?^\}/gm) || []
+  assert.equal(functions.length, 3)
+  const detection = functions.join('\n')
   assert.match(detection, /dsh_paths::profile_dir\(home, env::var_os\("DSH_HOME"\)/)
   assert.match(detection, /dsh_paths::user_home\(cfg!\(windows\), env::var_os\("HOME"\).*env::var_os\("USERPROFILE"\)/)
   assert.doesNotMatch(detection, /get_home_dir\(\)/)

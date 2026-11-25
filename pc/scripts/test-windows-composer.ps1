@@ -180,7 +180,13 @@ Assert ($null -eq (Find-WorkBuddyFocusedComposer $root $null)) 'absent focus fal
 # adapters. No P/Invoke is called, and no live desktop text is read or written.
 function Write-ComposerProgress([string]$stage) { $script:Stages.Add($stage) }
 function Get-MonotonicMilliseconds { $script:Clock += 25; return $script:Clock }
-function Start-Sleep { param($Milliseconds) }
+function Start-Sleep {
+  param($Milliseconds)
+  if ($script:DeferredForeground -and $Milliseconds -eq 50) {
+    [CodexVoiceNative]::Foreground = $true
+    $script:DeferredForeground = $false
+  }
+}
 function Reset-ActivationFixture {
   $script:WorkBuddyAccessibilityRequests = @{}
   $script:Stages = [System.Collections.Generic.List[string]]::new()
@@ -220,7 +226,7 @@ Assert ($info.Msaa -eq 0 -and $info.Detected -eq 0) 'lack of activation response
 
 function Get-Process {
   [CmdletBinding()] param($Name)
-  $process = [pscustomobject]@{ MainWindowHandle = [IntPtr]10; Id = 20 }
+  $process = [pscustomobject]@{ MainWindowHandle = [IntPtr]10; Id = 20; HasExited = $false }
   $process | Add-Member ScriptMethod Refresh {}
   return $process
 }
@@ -238,6 +244,10 @@ Reset-ActivationFixture
 [WorkBuddyUia]::Focused = $ready
 $target = Get-WorkBuddyTarget $null
 Assert ([CodexVoiceNative]::Requests.Count -eq 0) 'healthy focused editor does not trigger activation'
+[CodexVoiceNative]::Foreground = $false
+$script:DeferredForeground = $true
+$target = Get-WorkBuddyTarget $null
+Assert ($target.Composer.Element -eq $ready -and -not $script:DeferredForeground) 'first recording waits for asynchronous foreground transfer'
 Reset-ActivationFixture
 [WorkBuddyUia]::Focused = $null
 $failure = ''

@@ -291,8 +291,6 @@ export default function PersonaVoiceModal({ appearance, required = false, onClos
           )}
         </div>
         <div className="modal-body">
-          <UsageHelp onOpenApiSettings={onOpenApiSettings} />
-          {!previewAvailable && onOpenApiSettings && <button type="button" className="btn-ghost btn-sm" onClick={onOpenApiSettings}>配置语音服务</button>}
           <div className="persona-voice-modal__grid">
             <section className="persona-voice-modal__column">
               <div className="persona-voice-modal__section-head">
@@ -398,6 +396,7 @@ export default function PersonaVoiceModal({ appearance, required = false, onClos
                 <strong>声音</strong>
                 <span className="muted small">{service?.label || (loading ? "正在读取合成服务…" : "当前合成服务未知")}</span>
               </div>
+              {!previewAvailable && onOpenApiSettings && <button type="button" className="btn-ghost btn-sm" onClick={onOpenApiSettings}>配置语音服务</button>}
               {service?.provider === "volcengine" && <>
                 <label className="ui-field">
                   <span className="ui-field__label">搜索音色 · 共 {DOUBAO_SPEAKERS.length} 种</span>
@@ -442,7 +441,7 @@ export default function PersonaVoiceModal({ appearance, required = false, onClos
                       service={service} voice={form.voice} onChange={updateOverride} disabled={saving || loading} />
                   : <p className="muted small">跟随全局音色。请先在模型配置中补全合成模型和接口。</p>)}
               {errors.tts_overrides && <span className="ui-field__error">{errors.tts_overrides}</span>}
-              <div className="persona-voice-modal__row">
+              <div className="persona-voice-modal__sliders">
                 {service?.provider === "volcengine" && <label className="ui-field">
                   <span className="ui-field__label">语速 <em className="muted">{Number(form.voice.speed).toFixed(2)}</em></span>
                   <input
@@ -484,11 +483,13 @@ export default function PersonaVoiceModal({ appearance, required = false, onClos
                 {previewing && <button type="button" className="btn-ghost btn-sm"
                   onClick={() => { cancelPreview(); setPreviewing(false); }}>停止试听</button>}
                 <span className="muted small">
-                  {previewAvailable ? "点击试听听听效果。外语音色建议使用对应语言的开场白。" : previewHint}
+                  {previewAvailable ? "试听会播放开场白。外语音色建议搭配相同语言。" : previewHint}
                 </span>
               </div>
             </section>
           </div>
+
+          <UsageHelp onOpenApiSettings={onOpenApiSettings} />
 
           {saveError && (
             <div className="message-banner message-banner--error">
@@ -502,7 +503,7 @@ export default function PersonaVoiceModal({ appearance, required = false, onClos
           </button>
           <div className="persona-voice-modal__footer-actions">
             {!required && (
-              <button type="button" className="btn-ghost" onClick={requestClose} disabled={saving || confirmingClose}>
+              <button type="button" className="btn-secondary" onClick={requestClose} disabled={saving || confirmingClose}>
                 取消
               </button>
             )}

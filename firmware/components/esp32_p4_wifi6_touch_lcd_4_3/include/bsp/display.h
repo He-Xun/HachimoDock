@@ -10,11 +10,13 @@
 #include "esp_lcd_mipi_dsi.h"
 #include "sdkconfig.h"
 
+#define BSP_LCD_ST7102_LANES 2
+#define BSP_LCD_ST7102_LANE_MBPS 600
+#define BSP_LCD_ST7102_CLOCK_MHZ 40
+
 #if BSP_LCD_PANEL_AUTO
 #define BSP_LCD_NV3049_LANES 2
-// At 24 MHz DPI, 480 Mbps gives 2.5 byte-clock cycles per pixel.
-// The 2/44/480/46 pixel segments then require exactly 5/110/1200/115 cycles.
-#define BSP_LCD_NV3049_LANE_MBPS 480
+#define BSP_LCD_NV3049_LANE_MBPS 500
 #if BSP_LCD_NV3049_DMA_REFRESH
 // Request the exact 240 / 10 divider on IDF 5.5.4.
 #define BSP_LCD_NV3049_CLOCK_MHZ 24
@@ -65,12 +67,29 @@ void pet_p4_lcd_use_dma_refresh(esp_lcd_panel_handle_t panel);
 extern "C" {
 #endif
 
+typedef enum {
+    BSP_DISPLAY_ID_UNKNOWN,
+    BSP_DISPLAY_ID_NV3049,
+    BSP_DISPLAY_ID_ST7102,
+    BSP_DISPLAY_ID_ST7701,
+} bsp_display_id_t;
+
+/** Probe once before panel creation. Unverified replies, timeouts and builds
+ * without panel probing return UNKNOWN. Only NV3049 has a verified signature. */
+bsp_display_id_t bsp_probe_display_id(void);
+
+#if BSP_LCD_PANEL_AUTO
+bool bsp_probe_nv3049_display(void);
+esp_err_t bsp_nv3049_sleep_for_flash(esp_lcd_panel_io_handle_t io, bool keep_command_mode);
+#endif
+
 /**
  * @brief BSP display configuration structure
  *
  */
 typedef struct {
     bool nv3049;
+    bool st7102;
 } bsp_display_config_t;
 
 /**

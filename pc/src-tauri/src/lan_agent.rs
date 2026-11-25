@@ -417,12 +417,39 @@ pub(crate) async fn lan_device_status(app: tauri::AppHandle) -> Result<PairedLan
     }).await.map_err(|_| "Wi-Fi 设备状态查询任务未完成。")?
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalSelection {
+    #[serde(default)]
+    direction: i8,
+    #[serde(default)]
+    navigation_poll: bool,
+    boot_id: String,
+    sequence: u32,
+    agent_id: String,
+    session_id: String,
+}
+
+fn read_local_selection(peer: &Peer, boot: &str, request: u8) -> io::Result<LocalSelection> {
+    let bytes = exchange_response(peer, DEVICE_STATUS, &[request], Some(2048))?;
+    let row: LocalSelection = serde_json::from_slice(&bytes)?;
+    if row.boot_id != boot { return Err(io::Error::other("Wi-Fi device restarted")); }
+    Ok(row)
+}
+
 fn current_status(app: &tauri::AppHandle, peer: Peer) -> Result<PairedLanStatus, String> {
     let (peer, device) = read_peer_with_recovery(peer, query_component_status,
         "无法读取 Wi-Fi 设备状态，请确认设备在线且固件支持无线状态查询。")?;
     let (version, blocked) = ota::bundled_wifi6_status(app, &device.board_device_id);
+    // The status payload is at its wire budget, so session selection is
+    // advertised by answering selector 4 rather than by a rtcKey bit or field.
+    let selection = if device.control_trusted {
+        read_local_selection(&peer, &device.boot_id, 4).ok()
+    } else { None };
+    let session_selection = selection.is_some();
     maintenance::observe(app, &peer, &device);
     Ok(PairedLanStatus {
+        session_selection, selection,
         address: peer.address.ip().to_string(),
         bundled_firmware_version: version,
         bundled_firmware_rollback_blocked: blocked,
@@ -455,6 +482,8 @@ pub(crate) async fn lan_connection_snapshot(app: tauri::AppHandle) -> Result<Con
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PairedLanStatus {
+    session_selection: bool,
+    selection: Option<LocalSelection>,
     address: String,
     bundled_firmware_version: Option<&'static str>,
     bundled_firmware_rollback_blocked: bool,
@@ -1099,6 +1128,8 @@ pub(crate) fn paired() -> bool {
 struct SessionSnapshot {
     value: Value,
     observed: Instant,
+    voice_target: crate::P4SessionBinding,
+    boot_id: String,
 }
 static SESSIONS: Mutex<Option<SessionSnapshot>> = Mutex::new(None);
 // Order explicit follow changes with background presentation snapshots.
@@ -1131,6 +1162,7 @@ fn session_payload(input: &Value, agent: &str) -> Result<Value, String> {
         .ok_or("Invalid LAN active sessions.")?;
     let sessions: Vec<_> = rows.iter().map(|row| json!({
         "id": clipped(&row["id"], 127),
+        "agentId": agent,
         "title": clipped(&row["title"], 191),
         "content": clipped(&row["content"], 383),
         "state": clipped(&row["state"], 23),
@@ -1144,6 +1176,7 @@ fn session_payload(input: &Value, agent: &str) -> Result<Value, String> {
         "index": input["index"].as_u64().unwrap_or(0).min(999),
         "count": input["count"].as_u64().unwrap_or(0).min(999),
         "displayEnabled": input["displayEnabled"].as_bool().unwrap_or(false),
+        "selectionSequence": input["selectionSequence"].as_u64(),
         "activeSessionIds": active.iter().map(|id| clipped(id, 127)).collect::<Vec<_>>(),
         "sessions": sessions,
     }))
@@ -1155,24 +1188,41 @@ pub(crate) fn lan_agent_sessions(input: Value) -> Result<(), String> {
         .as_str()
         .and_then(crate::normalize_agent_id)
         .ok_or("Invalid LAN Agent.")?;
+    if agent != crate::resolve_usb_inject_agent_id() {
+        return Ok(());
+    }
     let value = session_payload(&input, &agent)?;
     *SESSIONS
         .lock()
         .map_err(|_| "LAN session queue unavailable.")? = Some(SessionSnapshot {
+        voice_target: crate::P4SessionBinding {
+            board_device_id: input["boardDeviceId"].as_str().unwrap_or_default().into(),
+            agent_id: agent,
+            session_id: input["sessionId"].as_str().filter(|s| *s != "auto").unwrap_or_default().into(),
+            session_title: input["title"].as_str().unwrap_or_default().into(),
+            session_cwd: input["sessionCwd"].as_str().unwrap_or_default().into(),
+            session_title_unique: input["sessionTitleUnique"] == true,
+            auto_follow: input["autoFollow"] == true,
+            ..Default::default()
+        },
+        boot_id: input["bootId"].as_str().unwrap_or_default().into(),
         value,
         observed: Instant::now(),
     });
     Ok(())
 }
 
+pub(crate) fn voice_target(board: &str, boot: &str) -> Option<crate::P4SessionBinding> {
+    let guard = SESSIONS.lock().ok()?;
+    let row = guard.as_ref()?;
+    (row.voice_target.board_device_id == board && row.boot_id == boot &&
+        row.observed.elapsed() <= SNAPSHOT_MAX_AGE).then(|| row.voice_target.clone())
+}
+
 fn current_sessions(agent: &str) -> Option<Value> {
-    // The explicit follow request clears the old device cards once. Further
-    // empty snapshots would reset the Antigravity speech bubble.
-    if agent == "antigravity" {
-        return None;
-    }
     let snapshot = SESSIONS.lock().ok()?;
     let snapshot = snapshot.as_ref()?;
+    if agent == "antigravity" && snapshot.value["sessions"].as_array().is_some_and(Vec::is_empty) { return None; }
     let age = snapshot.observed.elapsed();
     if age > SNAPSHOT_MAX_AGE || snapshot.value["agentId"] != agent {
         return None;
@@ -1185,8 +1235,31 @@ fn current_sessions(agent: &str) -> Option<Value> {
     Some(value)
 }
 
+pub(crate) fn initial_follow_sessions(agent: &str, input: Option<&Value>) -> Result<Option<Value>, String> {
+    let Some(snapshot) = input else { return Ok(None); };
+    if snapshot["agentId"].as_str() != Some(agent) {
+        return Err("会话与目标 Agent 不一致。".into());
+    }
+    session_payload(snapshot, agent).map(Some)
+}
+
+pub(crate) fn initial_follow_status(agent: &str, sessions: Option<&Value>) -> Value {
+    let mut state = json!({"source": agent, "state": "idle", "event": "source.follow_changed",
+        "reason": "source.follow_changed", "tsMs": crate::current_timestamp_ms()});
+    if let Some(row) = sessions.filter(|s| s["displayEnabled"] == true)
+        .and_then(|s| s["sessions"].as_array()).and_then(|rows| rows.first()) {
+        state["state"] = row["state"].clone();
+        state["sessionId"] = row["id"].clone();
+        state["displayTitle"] = row["title"].clone();
+        state["displayContent"] = row["content"].clone();
+    }
+    state
+}
+
 #[tauri::command]
 pub(crate) async fn lan_follow_agent(
+    initial_sessions: Option<Value>,
+    enabled_agents: Option<Vec<String>>,
     board_device_id: String,
     boot_id: String,
     agent_id: String,
@@ -1211,17 +1284,18 @@ pub(crate) async fn lan_follow_agent(
         {
             return Err("Wi-Fi 配对已变化，本次未切换跟随。".into());
         }
-        let sessions = current_sessions(&agent).unwrap_or_else(|| json!({
+        crate::require_idle_agent_switch(Some(&board_device_id))?;
+        let sessions = initial_follow_sessions(&agent, initial_sessions.as_ref())?.or_else(|| current_sessions(&agent)).unwrap_or_else(|| json!({
             "agentId": agent, "sessionId": "auto", "sessions": [],
             "activeSessionIds": [], "displayEnabled": false,
         }));
         let body = serde_json::to_vec(&json!({
-            "source": agent, "sessions": sessions, "status": {"state": "idle"},
+            "source": agent, "sessions": sessions, "status": initial_follow_status(&agent, Some(&sessions)),
         }))
             .map_err(|_| "无法准备 Wi-Fi 跟随指令。")?;
         exchange(&peer, SNAPSHOT, &body).map_err(|_| "Wi-Fi 设备未确认本次切换，请检查连接。")?;
-        crate::save_agent_selection(crate::AgentSelectionInput {
-            enabled_agents: vec![agent.clone()],
+        crate::write_agent_selection(crate::AgentSelectionInput {
+            enabled_agents: enabled_agents.unwrap_or_else(|| vec![agent.clone()]),
             selected_agent_id: Some(agent),
         }).map_err(|_| "设备已收到指令，桌面跟随配置保存失败。")?;
         Ok(())
@@ -1412,6 +1486,22 @@ pub(crate) fn start(app: tauri::AppHandle, usb: crate::usb_serial::UsbSerialMana
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn follow_switch_uses_only_the_target_session_for_both_transports() {
+        let source = json!({"agentId":"workbuddy","sessionId":"auto","displayEnabled":true,
+            "activeSessionIds":["s"], "sessions":[{"id":"s","title":"音频连接","content":"北京攻略","state":"working"}]});
+        assert!(initial_follow_sessions("codex", Some(&source)).is_err());
+        let sessions = initial_follow_sessions("workbuddy", Some(&source)).unwrap();
+        let first = initial_follow_status("workbuddy", sessions.as_ref());
+        assert_eq!(first["source"], "workbuddy");
+        assert_eq!(first["state"], "working");
+        assert_eq!(first["displayTitle"], "音频连接");
+        assert_eq!(first["displayContent"], "北京攻略");
+        let mut hidden = sessions.unwrap();
+        hidden["displayEnabled"] = false.into();
+        assert_eq!(initial_follow_status("workbuddy", Some(&hidden))["state"], "idle");
+    }
+
     #[test]
     fn panel_receipt_rejects_other_boards_reboots_and_invalid_boot_fields() {
         use super::panel_receipt_matches;

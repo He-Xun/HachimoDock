@@ -59,10 +59,8 @@ test("agent appearance matrix keeps unavailable channels visible and syncs only 
   assert.match(source, /is-undetected/);
   assert.match(source, /未检测到客户端或 CLI/);
   assert.match(source, /BUILTIN_TERRIER_APPEARANCE_ID/);
-  assert.match(source, /saveAgentAppearance\(agentId, appearance\.id\)/);
-  assert.match(source, /agentId === activeAgentId/);
-  assert.match(source, /setPendingFollow\(\{ agentId, appearance \}\)/);
-  assert.match(source, /applyDesktopPet\(agentId, appearance/);
+  assert.match(source, /applyDesktopPet\(appearance/);
+  assert.match(source, /enabledAgents\.has\(agent\.id\)/);
   assert.doesNotMatch(source, /shouldConfirmChannelSwitch\(/);
   assert.doesNotMatch(source, /pendingActivate/);
 });
@@ -76,7 +74,7 @@ test("Agent and appearance card summarizes detected Agents and device bubble beh
   assert.match(source, /aria-label="重新扫描本机 CLI Agent"/);
   assert.match(source, /loading=\{agentScan\?\.pending === true\}/);
   assert.match(source, /重新扫描/);
-  assert.match(source, /已检测到 \$\{agentScan\.detectedCount\} 个 Agent，设备端仅显示当前跟随的 Agent 状态，对话结束后设备气泡保留显示 60 秒/);
+  assert.match(source, /已检测到 \$\{agentScan\.detectedCount\} 个 Agent，可跟随最多 3 个。宠物首页左右切换 Agent，上下翻看当前 Agent 的气泡。对话结束后气泡保留 60 秒/);
 });
 
 test("current-Agent P4 session visibility is always on and follows adjacent snapshots", () => {
@@ -203,7 +201,7 @@ test("voice button configuration groups physical controls before device sync", (
 
   assert.match(source, /board-button-control-groups/);
   assert.match(source, /groupControlRows/);
-  assert.match(source, /voice-button-action-select/);
+  assert.match(source, /className="ui-control"/);
   assert.match(source, /buttonControlRowsForRuntime\(runtime\)/);
   assert.match(source, /controlGroups\.map/);
   assert.match(source, /group\.rows\.map/);

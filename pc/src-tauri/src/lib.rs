@@ -1247,7 +1247,10 @@ fn device_voice_target_is_current(context: &DeviceVoiceContext) -> bool {
         return false;
     }
     if let Some(route) = &context.wireless_route {
-        return route.is_current() && resolve_usb_inject_agent_id() == context.target.agent_id;
+        if !route.is_current() || resolve_usb_inject_agent_id() != context.target.agent_id { return false; }
+        if context.target.session_id.is_empty() { return true; }
+        return lan_agent::voice_target(&context.board_device_id, &context.boot_id)
+            .is_some_and(|target| device_voice_binding_matches(&context.target, &target));
     }
     if !context.connection_id.is_empty() {
         let manager = context.emitter.state::<usb_serial::UsbSerialManager>();
@@ -2455,8 +2458,9 @@ fn start_device_voice_context(
     session_queue_empty_at_start: bool,
     wireless_route: Option<lan_agent::voice::Route>,
     feedback_token: Option<u32>,
+    captured_target: Option<P4SessionBinding>,
 ) {
-    let target = if wireless_route.is_some() {
+    let target = captured_target.unwrap_or_else(|| if wireless_route.is_some() {
         P4SessionBinding {
             board_device_id: board_device_id.to_string(),
             agent_id: resolve_usb_inject_agent_id(),
@@ -2464,7 +2468,7 @@ fn start_device_voice_context(
         }
     } else {
         device_voice_target_snapshot(board_device_id)
-    };
+    });
     // Publish the capture before doing any desktop work. The USB reader can
     // then drain incoming PCM into the existing bounded pending queue.
     let use_current_visible_session = voice_needs_current_composer(
@@ -2612,16 +2616,9 @@ fn prepare_device_voice_agent(context: &DeviceVoiceContext) -> bool {
     let frontmost = codex_composer::CodexComposerBridge::is_agent_frontmost(agent_id);
     #[cfg(target_os = "macos")]
     {
-        let mut active = frontmost;
-        if !active && device_voice_target_is_current(context) {
-            codex_composer::CodexComposerBridge::activate_agent(agent_id);
-            for _ in 0..6 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                if !device_voice_target_is_current(context) { break; }
-                active = codex_composer::CodexComposerBridge::is_agent_frontmost(agent_id);
-                if active { break; }
-            }
-        }
+        let active = frontmost || codex_composer::CodexComposerBridge::wake_for_device_voice(
+            agent_id, || device_voice_target_is_current(context),
+        );
         crate::realtime_chat_log::record("", "voice_focus",
             serde_json::json!({"stage":"start","reason":if active {"ok"} else {"not_frontmost"},
                 "ok":active,"agent":agent_id}));
@@ -3502,6 +3499,9 @@ fn forward_usb_agent_input_to_bridge(
     } else {
         session_id.trim().to_string()
     };
+    if agent_id == "cursor-agent" && matches!(session_id.as_str(), "auto" | "default" | "new") {
+        return Err("请先在 Cursor 中打开并使用目标会话，待设备跟随后再发送。".into());
+    }
     let local_device_id = payload
         .get("localDeviceId")
         .and_then(|v| v.as_str())
@@ -3679,6 +3679,17 @@ fn handle_incoming_usb_message_with_voice_feedback(
                 && event.get("ok").and_then(|value| value.as_bool()) == Some(true)
                 && event.get("duplicate").and_then(|value| value.as_bool()) != Some(true)
             {
+                let board = event["boardDeviceId"].as_str().unwrap_or_default();
+                let target = device_voice_target_snapshot(board);
+                if let Some(agent) = payload["targetAgentId"].as_str() {
+                    if agent != target.agent_id || payload["targetSessionId"].as_str().is_some_and(|id| id != target.session_id) {
+                        let _ = emitter.emit("voice-transcript", serde_json::json!({
+                            "phase": "error", "boardDeviceId": board,
+                            "error": "所选会话正在同步，请重新按住说话。"
+                        }));
+                        return;
+                    }
+                }
                 eprintln!("[device-voice] validated audio capture began");
                 start_device_voice_context(
                     emitter,
@@ -3697,6 +3708,7 @@ fn handle_incoming_usb_message_with_voice_feedback(
                     None,
                     device_voice_feedback::supported(&payload["_nativeUsbScope"])
                         .then(|| device_voice_feedback::token(&payload["voiceFeedbackToken"])),
+                    Some(target),
                 );
             } else if event["ok"] == false {
                 let active = active_device_voice_context()
@@ -3885,10 +3897,7 @@ fn handle_incoming_usb_message_with_voice_feedback(
         };
         let (route_agent_id, route_session_id, voice_utterance_id) =
             resolve_usb_input_route_snapshot(&payload);
-        println!(
-            "[usb-device-input] received topic={} payload={}",
-            topic, payload
-        );
+        println!("[usb-device-input] received topic={} view={}", topic, agent_input.view);
         let emitter = emitter.clone();
         thread::spawn(move || {
             if !pc_audio_payload_is_current(&payload) {
@@ -4054,7 +4063,7 @@ const BRIDGE_LAUNCH_AGENT_LABEL: &str = "com.petmanager.status-bridge";
 const BRIDGE_WINDOWS_STARTUP_SCRIPT_NAME: &str = "Pet Manager Status Bridge.cmd";
 const USB_STATE_MAX_AGE_MS: u64 = 10 * 60 * 1000;
 const USB_BRIDGE_SCAN_MAX_FILES: usize = 64;
-const KNOWN_USB_STATE_SOURCES: [&str; 8] = [
+const KNOWN_USB_STATE_SOURCES: [&str; 9] = [
     "claude-code",
     "codex",
     "openclaw",
@@ -4063,6 +4072,7 @@ const KNOWN_USB_STATE_SOURCES: [&str; 8] = [
     "workbuddy",
     "devin",
     "hermes",
+    "cursor-agent",
 ];
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
@@ -4551,6 +4561,8 @@ async fn device_poll_pairing_result() -> Result<PairingStateResponse, String> {
 #[serde(rename_all = "camelCase")]
 struct DispatchRemoteCliBindingInput {
     #[serde(default)]
+    initial_sessions: Option<serde_json::Value>,
+    #[serde(default)]
     board_device_id: String,
     expected_connection_id: String,
     #[serde(default)]
@@ -4661,6 +4673,8 @@ async fn dispatch_remote_cli_binding(
         let connection_generation = follow_connection_generation(
             &usb_status, &board_device_id, &input.expected_connection_id, &input.expected_boot_id)?;
 
+        require_idle_agent_switch(Some(&board_device_id))?;
+        let initial_sessions = lan_agent::initial_follow_sessions(&target_source, input.initial_sessions.as_ref())?;
         let payload = serde_json::json!({
             "command": "remote_cli_binding.update",
             "enabled": true,
@@ -4690,16 +4704,10 @@ async fn dispatch_remote_cli_binding(
             )
             .map_err(|error| format!("USB 下发渠道切换失败: {error}"))?;
 
-        // Establish the new lifecycle before clearing its session queue. Old
-        // DSH lifecycle/event labels must not survive an otherwise idle follow.
-        // This is one fresh status update, never an asset mutation replay.
-        usb_manager.send_follow_change_for_connection(&board_device_id, connection_generation, &format!("state/{target_source}"), &serde_json::json!({
-            "source": &target_source,
-            "state": "idle",
-            "event": "source.follow_changed",
-            "reason": "source.follow_changed",
-            "tsMs": current_timestamp_ms(),
-        })).map_err(|_| "跟随已提交，但新渠道状态尚未确认；请检查连接，不要重复发送。".to_string())?;
+        let first_state = lan_agent::initial_follow_status(&target_source, initial_sessions.as_ref());
+        usb_manager.send_follow_change_for_connection(&board_device_id, connection_generation,
+            &format!("state/{target_source}"), &first_state)
+            .map_err(|_| "跟随已提交，但新渠道状态尚未确认；请检查连接，不要重复发送。".to_string())?;
 
         let mut sessions_reset = false;
         if usb_status.runtime.eq_ignore_ascii_case("esp-p4") {
@@ -4707,11 +4715,11 @@ async fn dispatch_remote_cli_binding(
                 p4_session_binding(), &board_device_id, &target_source, || {
                     usb_manager.send_session_current_for_connection(
                         &board_device_id, connection_generation,
-                        &serde_json::json!({
+                        initial_sessions.as_ref().unwrap_or(&serde_json::json!({
                             "sessionId": "auto", "title": "", "index": 0, "count": 0,
                             "sessions": [], "agentId": &target_source, "activeSessionIds": [],
                             "displayEnabled": true, "notice": "",
-                        }),
+                        })),
                     ).map_err(|error| format!("USB 清理旧 Agent 会话失败: {error}"))
                 },
             )?;
@@ -5181,6 +5189,7 @@ fn is_allowed_button_config_action(action: &str) -> bool {
             | "agent_enter"
             | "agent_prompt"
             | "session_next"
+            | "nav_left" | "nav_right"
             | "session_previous"
             | "session_clear"
             | "dsh_interrupt"
@@ -6133,13 +6142,40 @@ fn load_agent_selection() -> Result<AgentSelectionResponse, String> {
     })
 }
 
-#[tauri::command]
-fn save_agent_selection(input: AgentSelectionInput) -> Result<AgentSelectionResponse, String> {
+fn require_idle_agent_switch(board: Option<&str>) -> Result<(), String> {
+    if realtime_chat::status().active {
+        return Err("请先结束实时对话，再切换 Agent。".into());
+    }
+    let _gate = desktop_agent::try_composer_gate()
+        .map_err(|_| "桌面输入正在处理，请稍后再切换 Agent。")?;
+    let context = active_device_voice_context().lock()
+        .map_err(|_| "无法确认语音状态")?.clone();
+    if let Some(context) = context {
+        if !context.cancelled.load(Ordering::SeqCst) && context.lifecycle.admission_open() {
+            // A written draft can outlive the device confirmation UI. Retire its
+            // writer on navigation and atomically exclude a racing confirm.
+            let board = board.ok_or("请先完成当前语音，再调整跟随队列。")?;
+            return release_completed_voice_for_desktop_task(board)
+                .map_err(|reason| match reason {
+                    "voice_busy" => "语音正在录入或发送，请稍后再切换 Agent。".to_owned(),
+                    _ => "旧语音输入通道尚未释放，请稍后重试。".to_owned(),
+                });
+        }
+    }
+    ensure_pending_voice_writer_released()
+}
+
+fn write_agent_selection(input: AgentSelectionInput) -> Result<AgentSelectionResponse, String> {
     let _profile_gate = bridge_profile_write_gate().lock().map_err(|_| "profile update unavailable".to_string())?;
     let config_path = get_bridge_profile_path()?;
     let mut profile = read_bridge_profile(&config_path)?.unwrap_or_default();
     profile.version = 1;
     profile.updated_at = current_timestamp_ms();
+    let selected = input.selected_agent_id.as_deref().unwrap_or("");
+    if input.enabled_agents.len() > 3 || (!selected.is_empty() && !input.enabled_agents.iter().any(|id| id == selected)) {
+        return Err("请选择队列中的 Agent，最多跟随三个。".into());
+    }
+    if profile.selected_agent_id != selected || profile.enabled_agents != input.enabled_agents { require_idle_agent_switch(None)?; }
     profile.enabled_agents = input.enabled_agents;
     profile.selected_agent_id = input.selected_agent_id.unwrap_or_default();
     profile = normalize_bridge_profile(profile);
@@ -6156,6 +6192,13 @@ fn save_agent_selection(input: AgentSelectionInput) -> Result<AgentSelectionResp
         has_saved_selection: true,
         config_path: config_path.display().to_string(),
     })
+}
+
+#[tauri::command]
+fn save_agent_selection(
+    input: AgentSelectionInput,
+) -> Result<AgentSelectionResponse, String> {
+    write_agent_selection(input)
 }
 
 fn bridge_runtime_lifecycle_lock() -> &'static Mutex<()> {
@@ -6216,8 +6259,8 @@ fn ensure_bridge_runtime_blocking(
                 mqtt_username: default_mqtt_username(),
                 mqtt_password: default_mqtt_password(),
                 pet_channel_id: DEFAULT_PET_CHANNEL_ID.to_string(),
-                enabled_agents: Vec::new(),
-                selected_agent_id: String::new(),
+                enabled_agents: profile.enabled_agents,
+                selected_agent_id: profile.selected_agent_id,
                 dsh_approval_timeout_ms: None,
             }));
             let payload = serde_json::to_vec_pretty(&profile).map_err(|e| e.to_string())?;
@@ -6332,34 +6375,8 @@ fn ensure_bridge_runtime_blocking(
         };
     }
 
-    if running {
-        if let Ok(Some(status)) = fetch_bridge_agent_status() {
-            if bridge_agent_status_needs_restart(&profile, &status) {
-                eprintln!(
-                    "[bridge-runtime] selected agent adapter is recoverably unhealthy; restarting bridge"
-                );
-                stop_managed_bridge(&runtime_paths.pid_path);
-                stop_process_on_port(DEFAULT_BRIDGE_PORT);
-                thread::sleep(Duration::from_millis(250));
-                let launch =
-                    launch_bridge_runtime(&node_path, &bridge_assets, &profile, &runtime_paths)?;
-                (running, pid) = (launch.pid.is_some(), launch.pid);
-                mode = if running { "ready" } else { "error" };
-                message = if running {
-                    format!(
-                        "bridge 已自愈重启，正在发布到 {}。",
-                        build_topic_base(&profile)
-                    )
-                } else {
-                    format!(
-                        "Bridge 已尝试重新启动。{} 日志：{}",
-                        launch.failure.unwrap_or("本地服务健康检查未通过。"),
-                        runtime_paths.log_path.display()
-                    )
-                };
-            }
-        }
-    }
+    // Adapter readiness is independent of bridge health. Restarting here discards
+    // hook-only sessions for every other Agent in the follow queue.
 
     realtime_chat_log::record(
         "",
@@ -7895,6 +7912,94 @@ fn detect_dsh_with_home(home: Option<&Path>) -> DetectedAgent {
     }
 }
 
+fn classify_cursor_detection(
+    cli_path: Option<&str>,
+    has_config_dir: bool,
+    hooks_registered: bool,
+) -> (bool, bool, &'static str, String) {
+    if cli_path.is_none() && !has_config_dir {
+        return (
+            false,
+            false,
+            "not_found",
+            "当前没有发现 Cursor hooks.json 或可识别的本地配置。".to_string(),
+        );
+    }
+    if cli_path.is_some() && hooks_registered {
+        return (
+            true,
+            true,
+            "ready",
+            "Cursor 状态跟随和 Agent CLI 均已就绪。".into(),
+        );
+    }
+    (
+        true,
+        false,
+        if hooks_registered { "state_only" } else { "needs_hook" },
+        if hooks_registered {
+            "可跟随 Cursor 状态。要使用语音输入，请安装并登录 Cursor Agent CLI。".into()
+        } else if cli_path.is_some() {
+            "已检测到 Cursor Agent CLI。请打开 Cursor 并同步状态 Hook。".into()
+        } else {
+            "已检测到 Cursor 本地配置，但还没有注册状态 hook，也没有 agent CLI。".to_string()
+        },
+    )
+}
+
+fn find_cursor_cli(home: Option<&Path>) -> Option<String> {
+    if let Some(bin) = env::var_os("CURSOR_AGENT_BIN").map(PathBuf::from).filter(|p| p.is_file()) {
+        return Some(bin.to_string_lossy().into_owned());
+    }
+    #[cfg(windows)]
+    if let Some(local) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        for dir in ["cursor-agent", "Programs/cursor-agent"] {
+            for name in ["cursor-agent.exe", "cursor-agent.cmd", "agent.exe", "agent.cmd"] {
+                let candidate = local.join(dir).join(name);
+                if candidate.is_file() {
+                    return Some(candidate.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    find_agent_executable(
+        "cursor-agent", home,
+        &[".local/bin/cursor-agent", ".cursor/bin/cursor-agent", ".local/bin/agent",
+          ".local/bin/agent.exe", ".local/bin/agent.cmd", ".local/bin/cursor-agent.cmd",
+          ".local/bin/cursor-agent.exe", ".cursor/bin/agent"],
+        "cursor-agent.exe",
+    )
+}
+
+fn detect_cursor() -> DetectedAgent {
+    let home = get_home_dir().ok();
+    let cursor_dir = home.as_ref().map(|path| path.join(".cursor"));
+    let has_config_dir = cursor_dir.as_ref().is_some_and(|path| path.is_dir());
+    let hooks_path = cursor_dir.as_ref().map(|path| path.join("hooks.json"));
+    let hooks_registered = hooks_path.as_ref().is_some_and(|path| {
+        fs::read_to_string(path).is_ok_and(|text| text.contains("cursor-hook.js"))
+    });
+    let cli = find_cursor_cli(home.as_deref());
+    let (detected, ready, status, detail) =
+        classify_cursor_detection(cli.as_deref(), has_config_dir, hooks_registered);
+    DetectedAgent {
+        id: "cursor-agent".to_string(),
+        label: "Cursor".to_string(),
+        detected,
+        ready,
+        status: status.to_string(),
+        detail,
+        command_path: cli.unwrap_or_default(),
+        config_path: hooks_path
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        activity_path: cursor_dir
+            .map(|path| path.join("projects").to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        can_sync_hook: has_config_dir,
+    }
+}
+
 fn detect_hermes() -> DetectedAgent {
     let path = std::env::var_os("HERMES_HOME").map(PathBuf::from)
         .or_else(|| get_home_dir().ok().map(|home| home.join(".hermes")))
@@ -7973,7 +8078,7 @@ fn require_detected_follow_target(agent: &str) -> Result<(), String> {
 }
 
 fn antigravity_monitor_enabled_env(profile: &BridgeProfileFile) -> &'static str {
-    if profile.selected_agent_id == "antigravity" && detect_antigravity().detected {
+    if profile.enabled_agents.iter().any(|id| id == "antigravity") && detect_antigravity().detected {
         "true"
     } else {
         "false"
@@ -7996,6 +8101,7 @@ fn detect_local_agents_inner(devin_cloud_enabled: bool) -> Result<AgentDiscovery
         detect_devin(devin_cloud_enabled),
         detect_hermes(),
         detect_antigravity(),
+        detect_cursor(),
     ];
 
     Ok(AgentDiscoveryResponse {
@@ -11278,7 +11384,7 @@ fn normalize_agent_id(value: &str) -> Option<String> {
         "devin" | "devin-desktop" | "devin desktop" => Some("devin".to_string()),
         "copilot" | "copilot-cli" => Some("copilot-cli".to_string()),
         "gemini" | "gemini-cli" => Some("gemini-cli".to_string()),
-        "cursor" => Some("cursor".to_string()),
+        "cursor" | "cursor-agent" | "cursor agent" => Some("cursor-agent".to_string()),
         _ => {
             if normalized.is_empty() {
                 None
@@ -11760,6 +11866,7 @@ fn score_usb_source(source: &str) -> i32 {
         "codex" => 30,
         "deepseek-harness" => 25,
         "claude-code" => 20,
+        "cursor-agent" => 18,
         "mimocode" => 15,
         "workbuddy" => 15,
         "openclaw" => 10,
@@ -11801,6 +11908,7 @@ fn usb_source_display_name(source: &str) -> String {
         "devin" | "devin-desktop" | "devin desktop" => "Devin".to_string(),
         "hermes" => "Hermes Agent".to_string(),
         "antigravity" => "Antigravity".to_string(),
+        "cursor" | "cursor-agent" | "cursor agent" => "Cursor".to_string(),
         other if !other.is_empty() => other.to_string(),
         _ => "桌宠".to_string(),
     }
@@ -12014,7 +12122,10 @@ fn replay_usb_active_state(usb_manager: &usb_serial::UsbSerialManager, owner: &u
         return Ok(());
     }
     let board_device_id = &owner.board_device_id;
-    let cached = usb_replay::load(owner).filter(|(source, payload)| usb_session_binding_allows(board_device_id, source, payload));
+    let cached = usb_replay::load(owner).filter(|(source, payload)|
+        (!owner.runtime.eq_ignore_ascii_case("esp-p4")
+            || usb_manager.session_follow_target_is_current(board_device_id, &owner.connection_id, source))
+            && usb_session_binding_allows(board_device_id, source, payload));
     let same_source_non_speaking = cached
         .as_ref()
         .and_then(|(source, _)| pick_usb_bridge_state_for_source(source, true, &board_device_id));
@@ -12034,12 +12145,14 @@ fn replay_usb_active_state(usb_manager: &usb_serial::UsbSerialManager, owner: &u
 
     usb_manager.send_approval_bound(board_device_id, generation, &format!("state/{source}"), &payload)?;
 
-    let mut active_payload = payload.clone();
-    if let Some(object) = active_payload.as_object_mut() {
-        object.insert("activeTopic".to_string(), serde_json::json!(true));
-        object.insert("source".to_string(), serde_json::json!(source.clone()));
+    if !owner.runtime.eq_ignore_ascii_case("esp-p4") {
+        let mut active_payload = payload.clone();
+        if let Some(object) = active_payload.as_object_mut() {
+            object.insert("activeTopic".to_string(), serde_json::json!(true));
+            object.insert("source".to_string(), serde_json::json!(source.clone()));
+        }
+        usb_manager.send_approval_bound(board_device_id, generation, "state/active", &active_payload)?;
     }
-    usb_manager.send_approval_bound(board_device_id, generation, "state/active", &active_payload)?;
     if let Some(restore_text) = build_usb_restore_speech_text(&source, &payload) {
         let speech = serde_json::json!({"text":restore_text, "source":source, "sessionId":payload["sessionId"]});
         usb_manager.send_approval_bound(board_device_id, generation, "speech/text", &speech)?;
@@ -12066,12 +12179,14 @@ fn forward_current_state_after_usb_connect(
     };
 
     usb_manager.send_state(&source, &payload)?;
-    let mut active_payload = payload.clone();
-    if let Some(object) = active_payload.as_object_mut() {
-        object.insert("activeTopic".to_string(), serde_json::json!(true));
-        object.insert("source".to_string(), serde_json::json!(source.clone()));
+    if !status.runtime.eq_ignore_ascii_case("esp-p4") {
+        let mut active_payload = payload.clone();
+        if let Some(object) = active_payload.as_object_mut() {
+            object.insert("activeTopic".to_string(), serde_json::json!(true));
+            object.insert("source".to_string(), serde_json::json!(source.clone()));
+        }
+        usb_manager.send_state("active", &active_payload)?;
     }
-    usb_manager.send_state("active", &active_payload)?;
     usb_replay::store(&status, &source, &payload);
     eprintln!(
         "[usb-auto] replayed current state/{} and state/active after connect",
@@ -12297,7 +12412,7 @@ fn start_usb_state_forwarder(usb_manager: usb_serial::UsbSerialManager) {
                     }
                 }
                 let next_filter_signature = enabled_usb_filter_signature(&next_enabled_agents);
-                if next_filter_signature != last_disabled_filter_signature {
+                if next_filter_signature != last_disabled_filter_signature || selected_agent != next_selected_agent {
                     last_source_signatures.clear();
                     last_speech_signatures.clear();
                     last_active_signature.clear();
@@ -12330,6 +12445,13 @@ fn start_usb_state_forwarder(usb_manager: usb_serial::UsbSerialManager) {
                 enabled_agents = next_enabled_agents;
                 selected_agent = next_selected_agent;
                 last_enabled_refresh_ms = now_ms;
+            }
+
+            if selected_agent.as_deref().is_some_and(|agent|
+                !usb_manager.session_follow_target_is_current(&status.board_device_id, &status.connection_id, agent)
+            ) {
+                last_enabled_refresh_ms = 0;
+                continue;
             }
 
             forward_usb_speech_updates(
@@ -12525,6 +12647,15 @@ fn start_usb_state_forwarder(usb_manager: usb_serial::UsbSerialManager) {
                 continue;
             }
 
+            // P4 interprets state/<name> as a real agent. Its named frame
+            // already went out above; the legacy alias would rename it "active".
+            if status.runtime.eq_ignore_ascii_case("esp-p4") {
+                if last_source_signatures.get(&best_source) == Some(&best_signature) {
+                    last_active_signature = active_signature;
+                    usb_replay::store(&status, &best_source, &base_payload);
+                }
+                continue;
+            }
             match usb_manager.send_state("active", &active_payload) {
                 Ok(_) => {
                     last_active_signature = active_signature;
@@ -13195,15 +13326,14 @@ fn normalize_bridge_profile(mut profile: BridgeProfileFile) -> BridgeProfileFile
     profile.mqtt_username = profile.mqtt_username.trim().to_string();
     profile.mqtt_password = profile.mqtt_password.trim().to_string();
     profile.pet_channel_id = normalize_pet_channel_id(profile.pet_channel_id);
-    // Step 1 (from main): normalize + dedup the enabled_agents list.
-    // filter_map drops empties; sort+dedup collapses duplicates.
+    // Joystick cycling follows the order chosen on the desktop.
     profile.enabled_agents = profile
         .enabled_agents
         .into_iter()
         .filter_map(|id| normalize_agent_id(&id))
         .collect();
-    profile.enabled_agents.sort();
-    profile.enabled_agents.dedup();
+    let mut seen = std::collections::HashSet::new();
+    profile.enabled_agents.retain(|agent| seen.insert(agent.clone()));
     // Step 2 (from feat/agent-session-bus): voice agent promotion logic.
     // We deliberately do NOT derive selected_agent_id from pet_channel_id
     // anymore. pet_channel_id is the legacy board-side MQTT routing slot, and
@@ -13214,7 +13344,8 @@ fn normalize_bridge_profile(mut profile: BridgeProfileFile) -> BridgeProfileFile
     // frontend's auto-pick path takes it from there based on what's actually
     // detected on this machine.
     profile.selected_agent_id = normalize_agent_id(&profile.selected_agent_id).unwrap_or_default();
-    if profile.selected_agent_id != "antigravity" {
+
+    if profile.selected_agent_id.is_empty() {
         profile.enabled_agents.retain(|agent| agent != "antigravity");
     }
     if !profile.selected_agent_id.is_empty()
@@ -13223,6 +13354,13 @@ fn normalize_bridge_profile(mut profile: BridgeProfileFile) -> BridgeProfileFile
         profile
             .enabled_agents
             .insert(0, profile.selected_agent_id.clone());
+    }
+    if profile.enabled_agents.len() > 3 {
+        let selected = profile.selected_agent_id.clone();
+        profile.enabled_agents.truncate(3);
+        if !selected.is_empty() && !profile.enabled_agents.contains(&selected) {
+            profile.enabled_agents[2] = selected;
+        }
     }
     if profile.selected_agent_id.is_empty() && !profile.enabled_agents.is_empty() {
         profile.selected_agent_id = profile.enabled_agents[0].clone();
@@ -13315,6 +13453,7 @@ fn selected_agent_to_channel_id(value: &str) -> String {
         "devin" => "devin".to_string(),
         "hermes" => "hermes".to_string(),
         "antigravity" => "antigravity".to_string(),
+        "cursor-agent" => "cursor-agent".to_string(),
         _ => DEFAULT_PET_CHANNEL_ID.to_string(),
     }
 }
@@ -13330,7 +13469,7 @@ fn normalize_pet_channel_id(value: String) -> String {
         "devin" | "devin-desktop" | "devin desktop" => "devin".to_string(),
         "hermes" => "hermes".to_string(),
         "antigravity" => "antigravity".to_string(),
-        "cursor" => "cursor".to_string(),
+        "cursor" | "cursor-agent" | "cursor agent" => "cursor-agent".to_string(),
         _ => DEFAULT_PET_CHANNEL_ID.to_string(),
     }
 }
@@ -14728,85 +14867,6 @@ fn read_live_managed_pid(pid_path: &Path) -> Option<u32> {
     }
 }
 
-fn fetch_bridge_agent_status() -> Result<Option<serde_json::Value>, String> {
-    let cap = bridge_capability::load("read")?;
-    let url = format!("{}/agent/status", cap.base_url);
-    let response = bridge_capability::blocking_client(Duration::from_millis(1200))?
-        .get(url)
-        .bearer_auth(&cap.token)
-        .send()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Ok(None);
-    }
-    let text = response.text().map_err(|error| error.to_string())?;
-    serde_json::from_str::<serde_json::Value>(&text)
-        .map(Some)
-        .map_err(|error| error.to_string())
-}
-
-fn bridge_agent_status_needs_restart(
-    profile: &BridgeProfileFile,
-    status: &serde_json::Value,
-) -> bool {
-    let selected = normalize_agent_id(&profile.selected_agent_id)
-        .or_else(|| {
-            profile
-                .enabled_agents
-                .iter()
-                .find_map(|agent| normalize_agent_id(agent))
-        })
-        .unwrap_or_default();
-    if selected.is_empty() {
-        return false;
-    }
-
-    let adapters = status
-        .get("adapters")
-        .or_else(|| status.get("agents"))
-        .and_then(|value| value.as_array());
-    let Some(adapters) = adapters else {
-        return false;
-    };
-
-    adapters.iter().any(|adapter| {
-        let agent_id = adapter
-            .get("agentId")
-            .and_then(|value| value.as_str())
-            .and_then(normalize_agent_id)
-            .unwrap_or_default();
-        if agent_id != selected {
-            return false;
-        }
-        if adapter
-            .get("ready")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false)
-        {
-            return false;
-        }
-        let reason = adapter
-            .get("reason")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        bridge_adapter_reason_is_recoverable(&agent_id, reason)
-    })
-}
-
-fn bridge_adapter_reason_is_recoverable(agent_id: &str, reason: &str) -> bool {
-    let reason = reason.to_ascii_lowercase();
-    match agent_id {
-        "codex" => {
-            (reason.contains("codex cli")
-                && (reason.contains("未找到") || reason.contains("not found")))
-                || reason.contains("codex --version")
-                || (reason.contains("node") && reason.contains("no such file"))
-                || reason.contains("env: node")
-        }
-        _ => false,
-    }
-}
-
 fn probe_bridge_running(port: u16) -> bool {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
     let mut stream = match TcpStream::connect_timeout(&address, Duration::from_millis(500)) {
@@ -15258,6 +15318,44 @@ mod tests {
         assert_eq!(detected.id, "workbuddy");
         assert_eq!(detected.label, "WorkBuddy");
         assert!(detected.config_path.ends_with("settings.json"));
+    }
+
+    #[test]
+    fn cursor_agent_uses_the_hook_id_and_cli_inject_path() {
+        assert_eq!(normalize_agent_id("Cursor").as_deref(), Some("cursor-agent"));
+        assert_eq!(normalize_agent_id("cursor-agent").as_deref(), Some("cursor-agent"));
+        assert_eq!(normalize_agent_id("Cursor Agent").as_deref(), Some("cursor-agent"));
+        assert_eq!(selected_agent_to_channel_id("cursor-agent"), "cursor-agent");
+        assert_eq!(normalize_pet_channel_id("cursor".into()), "cursor-agent");
+        assert_eq!(usb_source_display_name("cursor-agent"), "Cursor");
+        assert!(KNOWN_USB_STATE_SOURCES.contains(&"cursor-agent"));
+        assert!(!agent_uses_visible_composer("cursor-agent"));
+        let (detected, ready, status, detail) = classify_cursor_detection(None, false, false);
+        assert!(!detected);
+        assert!(!ready);
+        assert_eq!(status, "not_found");
+        assert!(detail.contains("hooks.json"));
+        let (detected, ready, status, detail) = classify_cursor_detection(Some("cursor-agent"), true, true);
+        assert!(detected);
+        assert!(ready);
+        assert_eq!(status, "ready");
+        assert!(detail.contains("CLI"));
+        let (detected, ready, status, _) = classify_cursor_detection(None, true, true);
+        assert!(detected);
+        assert!(!ready);
+        assert_eq!(status, "state_only");
+        let (_, ready, status, _) = classify_cursor_detection(Some("cursor-agent"), true, false);
+        assert!(!ready);
+        assert_eq!(status, "needs_hook");
+        let payload = serde_json::json!({"view":"voice_input","state":"测试","type":"voice_ptt_streaming_stt"});
+        let input = extract_usb_agent_input("input/action", &payload).unwrap();
+        for session in ["", "auto", "default", "new"] {
+            assert!(forward_usb_agent_input_to_bridge(&payload, &input, "cursor-agent", session)
+                .unwrap_err().contains("目标会话"));
+        }
+        let detected = detect_cursor();
+        assert_eq!(detected.id, "cursor-agent");
+        assert_eq!(detected.label, "Cursor");
     }
 
     #[test]
@@ -16729,6 +16827,7 @@ mod tests {
             disabled,
             vec![
                 "codex".to_string(),
+                "cursor-agent".to_string(),
                 "deepseek-harness".to_string(),
                 "devin".to_string(),
                 "hermes".to_string(),
@@ -17075,41 +17174,6 @@ mod tests {
         assert!(!script.contains("${PATH:+:$PATH}"));
         assert!(script.contains("export CLAWD_BRIDGE_PORT='23333'"));
         assert!(script.contains("export CLAWD_BRIDGE_STRICT_PORT=1"));
-    }
-
-    #[test]
-    fn bridge_agent_status_requests_restart_when_selected_codex_cli_shim_lacks_node() {
-        let profile = BridgeProfileFile {
-            selected_agent_id: "codex".to_string(),
-            enabled_agents: vec!["codex".to_string()],
-            ..BridgeProfileFile::default()
-        };
-        let status = serde_json::json!({
-            "ok": true,
-            "adapters": [
-                { "agentId": "codex", "ready": false, "reason": "codex --version 调用失败 (/Users/me/.npm-global/bin/codex)" },
-                { "agentId": "claude-code", "ready": true, "reason": null }
-            ]
-        });
-
-        assert!(bridge_agent_status_needs_restart(&profile, &status));
-    }
-
-    #[test]
-    fn bridge_agent_status_requests_restart_when_selected_codex_cli_is_missing() {
-        let profile = BridgeProfileFile {
-            selected_agent_id: "codex".to_string(),
-            enabled_agents: vec!["codex".to_string()],
-            ..BridgeProfileFile::default()
-        };
-        let status = serde_json::json!({
-            "ok": true,
-            "adapters": [
-                { "agentId": "codex", "ready": false, "reason": "codex CLI 未找到（请设置 CODEX_CLI_PATH）" }
-            ]
-        });
-
-        assert!(bridge_agent_status_needs_restart(&profile, &status));
     }
 
     #[test]

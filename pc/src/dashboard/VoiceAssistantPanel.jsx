@@ -156,6 +156,7 @@ function voicePhaseLabel(phase) {
 }
 
 export default function VoiceAssistantPanel({
+  panelOpen = true,
   state,
   dispatch,
   toggleAudioBridge,
@@ -186,6 +187,7 @@ export default function VoiceAssistantPanel({
   });
 
   useEffect(() => {
+    if (!panelOpen) return;
     let cancelled = false;
     const loadAsrState = () => {
       invoke("load_device_asr_settings")
@@ -220,7 +222,7 @@ export default function VoiceAssistantPanel({
       cancelled = true;
       window.removeEventListener(API_CONFIGURATION_UPDATED_EVENT, handleApiConfigurationUpdated);
     };
-  }, [dispatch]);
+  }, [panelOpen]);
 
   const agents = Array.isArray(state.busStatus?.agents) ? state.busStatus.agents : [];
   const selectedAgent = agents.find((agent) => agent.agentId === state.selectedAgentId) || null;
@@ -284,7 +286,7 @@ export default function VoiceAssistantPanel({
             : `通过 ${voiceTransport} 接收设备麦克风音频`;
 
   useEffect(() => {
-    if (!showAccessibilityGuidance || desktopPlatform !== "macos") {
+    if (!panelOpen || !showAccessibilityGuidance || desktopPlatform !== "macos") {
       return undefined;
     }
     let cancelled = false;
@@ -314,6 +316,7 @@ export default function VoiceAssistantPanel({
       cancelled = true;
     };
   }, [
+    panelOpen,
     desktopPlatform,
     showAccessibilityGuidance,
     state.deviceVoiceFlow?.updatedAt,

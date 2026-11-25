@@ -33,6 +33,7 @@ typedef struct { unsigned control; int delta; uint64_t ts_ms; } pet_p4_input_eve
 typedef struct { char action[20], value[20]; } pet_p4_input_binding_t;
 static unsigned g_event_sequence, allowed, refused;
 static atomic_uint g_dropped_events;
+const char *pet_p4_boot_identity(void) { return "0123456789abcdef"; }
 static uint64_t now;
 static uint64_t esp_timer_get_time(void) { return now * 1000; }
 static const char *control_name(unsigned control) { return control ? "encoder" : "sw1"; }

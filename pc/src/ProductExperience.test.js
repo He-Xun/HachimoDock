@@ -526,9 +526,8 @@ test("device dashboard remains the management surface with one desktop-pet assig
   assert.doesNotMatch(channelMatrix, /className="channel-row__thumb-wrap"/);
   assert.match(channelMatrix, /agentOptions\.filter\(\(agent\) => agent\?\.id\)/);
   assert.match(channelMatrix, /BUILTIN_TERRIER_APPEARANCE_ID/);
-  assert.match(channelMatrix, /saveAgentAppearance\(agentId, appearance\.id\)/);
-  assert.match(channelMatrix, /setPendingFollow\(\{ agentId, appearance \}\)/);
-  assert.match(channelMatrix, /applyDesktopPet\(agentId, appearance/);
+  assert.match(channelMatrix, /applyDesktopPet\(appearance/);
+  assert.match(channelMatrix, /enabledAgents\.has\(agent\.id\)/);
   assert.match(channelMatrix, /formosa-picker__grid/);
   assert.match(channelMatrix, /usb\?\.connected/);
   assert.doesNotMatch(channelMatrix, /ChannelSwitchConfirmModal/);

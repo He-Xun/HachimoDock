@@ -15,13 +15,15 @@ function syncAllHooks(options = {}) {
       const { registerGeminiHooks } = require("./gemini-install.js");
       return registerGeminiHooks({ silent: true });
     });
-    run("cursor", () => {
-      const { registerCursorHooks } = require("./cursor-install.js");
-      return registerCursorHooks({ silent: true });
-    });
     run("codebuddy", () => {
       const { registerCodeBuddyHooks } = require("./codebuddy-install.js");
       return registerCodeBuddyHooks({ silent: true });
+    });
+  }
+  if (options.syncLegacyHooks !== false || options.syncCursor) {
+    run("cursor", () => {
+      const { registerCursorHooks } = require("./cursor-install.js");
+      return registerCursorHooks({ silent: true });
     });
   }
   if (options.syncMiMoCode === true) {

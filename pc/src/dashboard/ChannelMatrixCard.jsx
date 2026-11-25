@@ -1,5 +1,5 @@
 /**
- * [Input] useDeviceContext for appearances/agentAppearanceMap/agentOptions/currentDisplay/verified USB status/cancellable appearanceSync/refreshAppearances/applyDesktopPet/saveAgentAppearance; useToast for notices.
+ * [Input] useDeviceContext for the shared appearance, ordered follow queue and verified USB/Wi-Fi status; useToast for notices.
  * [Output] Agent matrix with USB-priority follow switching, authenticated Wi-Fi appearance sync, cancel controls, and Devin cloud configuration.
  * [Pos] component node in pc/src/dashboard
  * [Sync] If this file changes, update `pc/src/dashboard/.folder.md`.
@@ -28,7 +28,6 @@ import { BUILTIN_TERRIER_APPEARANCE_ID } from "../lib/builtin-appearances.js";
 import {
   APPEARANCE_SYNC_CANCELLED_MESSAGE,
   APPEARANCE_CHANGE_USB_REQUIRED_MESSAGE,
-  CHANNEL_SWITCH_DEVICE_REQUIRED_MESSAGE,
 } from "../lib/desktop-pet-assignment.js";
 import AppearancePreview from "../AppearancePreview.jsx";
 import { resolveDashboardPreviewMedia } from "../lib/appearance-preview.js";
@@ -42,6 +41,7 @@ import DevinConfigurationButton from "./DevinConfigurationButton.jsx";
 
 const AGENT_ICONS = {
   "claude-code": Code,
+  "cursor-agent": Terminal,
   codex: Terminal,
   openclaw: Zap,
   mimocode: Braces,
@@ -72,7 +72,7 @@ function normalizeSyncProgress(progress = {}) {
 export default function ChannelMatrixCard({ children, subtitle, actions, onOpenPersona }) {
   const {
     appearances,
-    agentAppearanceMap,
+    enabledAgents,
     agentOptions,
     currentDisplay,
     usb,
@@ -80,14 +80,13 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
     appearanceSync,
     refreshAppearances,
     applyDesktopPet,
-    followAgent,
+    rememberAgent, enableQueuedAgent, removeQueuedAgent,
     cancelAppearanceSync,
-    saveAgentAppearance,
+
   } = useDeviceContext();
   const { push } = useToast();
 
   const [pickerState, setPickerState] = useState(null); // { agentId }
-  const [pendingFollow, setPendingFollow] = useState(null); // { agentId, appearance }
   const syncing = appearanceSync?.pending === true;
   const syncProgress = appearanceSync?.progress
     ? normalizeSyncProgress(appearanceSync.progress)
@@ -96,14 +95,6 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
   const visibleAgents = useMemo(() => agentOptions.filter((agent) => agent?.id), [agentOptions]);
   const activeAgentId = currentDisplay.agentId;
   const canFollow = Boolean(usb?.connected || wifi);
-
-  const appearanceForAgent = useCallback(
-    (agentId) => {
-      const appearanceId = agentAppearanceMap[agentId] || BUILTIN_TERRIER_APPEARANCE_ID;
-      return appearanceById(appearances, appearanceId) || appearanceById(appearances, BUILTIN_TERRIER_APPEARANCE_ID) || appearances[0] || null;
-    },
-    [agentAppearanceMap, appearances],
-  );
 
   const closePicker = useCallback(() => setPickerState(null), []);
 
@@ -114,22 +105,11 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
     });
   }, [refreshAppearances]);
 
-  const handleConfirmAppearance = useCallback(async (agentId, appearance) => {
-    if (!agentId || !appearance?.id) return;
-    const isFollowed = agentId === activeAgentId;
+  const handleConfirmAppearance = useCallback(async (appearance) => {
+    if (!appearance?.id) return;
     closePicker();
-
-    if (!isFollowed) {
-      saveAgentAppearance(agentId, appearance.id);
-      push({
-        tone: "success",
-        title: `已为 ${channelLabelForId(agentOptions, agentId)} 保存「${appearance.name}」`,
-      });
-      return;
-    }
-
     try {
-      const { notice } = await applyDesktopPet(agentId, appearance, {
+      const { notice } = await applyDesktopPet(appearance, {
         initialProgress: {
           text: `正在核对设备上的「${appearance.name}」…`,
           percent: 0,
@@ -148,49 +128,15 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
         message: cancelled ? "已停止本次操作。" : msg,
       });
     }
-  }, [activeAgentId, agentOptions, applyDesktopPet, closePicker, push, saveAgentAppearance]);
+  }, [applyDesktopPet, closePicker, push]);
 
-  const requestFollow = useCallback((agentId) => {
-    const appearance = appearanceForAgent(agentId);
-    if (!appearance) return;
-    setPendingFollow({ agentId, appearance });
-  }, [appearanceForAgent]);
-
-  const confirmFollow = useCallback(async () => {
-    if (!pendingFollow) return;
-    const { agentId, appearance } = pendingFollow;
-    setPendingFollow(null);
-    const followOnly = !wifi && appearance.id === currentDisplay.appearance?.id;
+  const changeFollow = async (operation, id) => {
     try {
-      const { notice } = await followAgent(agentId, appearance, {
-        initialProgress: followOnly
-          ? {
-            text: "正在确认…",
-            followOnly: true,
-          }
-          : {
-            text: `正在核对「${appearance.name}」并切换跟随…`,
-            percent: 0,
-            indeterminate: true,
-          },
-      });
-      push({ tone: "success", title: notice || `已跟随 ${channelLabelForId(agentOptions, agentId)}` });
-    } catch (err) {
-      const msg = err?.message || String(err);
-      const cancelled = msg === APPEARANCE_SYNC_CANCELLED_MESSAGE;
-      const tone =
-        cancelled ||
-        msg === APPEARANCE_CHANGE_USB_REQUIRED_MESSAGE ||
-        msg === CHANNEL_SWITCH_DEVICE_REQUIRED_MESSAGE
-          ? "warning"
-          : "error";
-      push({
-        tone,
-        title: cancelled ? "形象传输已中断" : "切换跟随失败",
-        message: cancelled ? "本次未切换。" : msg,
-      });
+      await operation(id);
+    } catch (error) {
+      push({ tone: "warning", title: "未能更改跟随", message: error?.message || String(error) });
     }
-  }, [agentOptions, followAgent, currentDisplay.appearance?.id, pendingFollow, push, wifi]);
+  };
 
   const handleCancelAppearanceSync = useCallback(async () => {
     try {
@@ -206,11 +152,9 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
 
   const appearance = currentDisplay.appearance;
   const media = resolveDashboardPreviewMedia(appearance);
-  const activeAgent = visibleAgents.find(agent => agent.id === activeAgentId);
   let pickerHint = "";
   if (syncing) pickerHint = "当前同步完成后可更换形象。";
   else if (!activeAgentId) pickerHint = "先在下方选择要跟随的 Agent。";
-  else if (!activeAgent?.detected) pickerHint = "未检测到当前 Agent，请打开客户端后重新扫描。";
   else if (!canFollow) pickerHint = "设备连接 USB 或 Wi-Fi 后可更换形象。";
   const [playing, setPlaying] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
@@ -220,7 +164,21 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
       <div>
         <span className="kicker">{currentDisplay.appearanceUnverified ? "已配置形象 · 待设备确认" : "当前形象"}</span>
         <h2>{appearance.name}</h2>
-        {activeAgentId && <div className="meta">正在跟随<strong>{currentDisplay.channelLabel}</strong></div>}
+        {activeAgentId && (enabledAgents.size <= 1 ? (
+          <div className="meta">正在跟随<strong>{currentDisplay.channelLabel}</strong></div>
+        ) : (
+          <div className="companion-follow">
+            <span className="companion-follow__label" id="companion-follow-label">正在跟随</span>
+            <div className="companion-follow__options" role="group" aria-labelledby="companion-follow-label">
+              {[...enabledAgents].map(id => (
+                <button key={id} type="button" className="companion-follow__option"
+                  aria-pressed={id === activeAgentId} onClick={() => changeFollow(rememberAgent, id)}>
+                  {channelLabelForId(agentOptions, id)}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
         <div className="companion-hero__actions">
           <button type="button" className="action" onClick={() => onOpenPersona(appearance)} aria-haspopup="dialog">
             <AudioLines size={15} /> 人设和声音
@@ -284,13 +242,13 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
         <div className="channel-matrix__rows">
           {visibleAgents.map((agent) => {
             const Icon = AGENT_ICONS[agent.id] || Code;
-            const isFollowed = activeAgentId === agent.id;
+            const isFollowed = enabledAgents.has(agent.id);
             const isDetected = agent.detected === true;
             return (
               <article
                 key={agent.id}
                 className={`channel-row${isFollowed ? " is-active" : ""}${isDetected ? "" : " is-undetected"}`}
-                aria-current={isFollowed ? "true" : undefined}
+                aria-current={activeAgentId === agent.id ? "true" : undefined}
               >
                 <div className="channel-row__channel">
                   <span className="channel-row__icon"><Icon size={16} /></span>
@@ -310,7 +268,8 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
 
                 <div className="channel-row__follow">
                   {isFollowed ? (
-                    <span className="channel-row__follow-current">已跟随</span>
+                    enabledAgents.size === 1 ? <span className="channel-row__follow-current">已跟随</span> :
+                    <button type="button" className="btn-secondary btn-sm" onClick={() => changeFollow(removeQueuedAgent, agent.id)}>取消跟随</button>
                   ) : !isDetected ? (
                     <span
                       className="channel-row__unavailable"
@@ -322,9 +281,9 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
                     <button
                       type="button"
                       className="btn-primary btn-sm channel-row__follow-button"
-                      onClick={() => requestFollow(agent.id)}
-                      disabled={syncing || !canFollow}
-                      title={!canFollow ? "用 USB 连接，或与当前设备完成 Wi-Fi 配对" : ""}
+                      onClick={() => changeFollow(enableQueuedAgent, agent.id)}
+                      disabled={syncing || enabledAgents.size >= 3}
+                      title={enabledAgents.size >= 3 ? "最多跟随 3 个 Agent" : ""}
                     >
                       跟随
                     </button>
@@ -339,28 +298,13 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
       {pickerState && (
         <AgentAppearancePickerModal
           appearances={appearances}
-          agentLabel={channelLabelForId(agentOptions, pickerState.agentId)}
-          selectedAppearanceId={(agentAppearanceMap[pickerState.agentId] || BUILTIN_TERRIER_APPEARANCE_ID)}
-          isFollowed={pickerState.agentId === activeAgentId}
+          selectedAppearanceId={appearance?.id}
           syncing={syncing}
           onClose={closePicker}
-          onConfirm={(appearance) => handleConfirmAppearance(pickerState.agentId, appearance)}
+          onConfirm={handleConfirmAppearance}
         />
       )}
 
-      {pendingFollow && (
-        <FollowAgentConfirmModal
-          currentLabel={channelLabelForId(agentOptions, activeAgentId)}
-          nextLabel={channelLabelForId(agentOptions, pendingFollow.agentId)}
-          appearanceName={pendingFollow.appearance?.name || "西高地小狗"}
-          reusesCurrentAppearance={pendingFollow.appearance?.id === currentDisplay.appearance?.id}
-          wifi={wifi}
-          builtin={pendingFollow.appearance?.id === BUILTIN_TERRIER_APPEARANCE_ID}
-          syncing={syncing}
-          onCancel={() => setPendingFollow(null)}
-          onConfirm={confirmFollow}
-        />
-      )}
     </div>
     </Card>
   </>);
@@ -368,9 +312,7 @@ export default function ChannelMatrixCard({ children, subtitle, actions, onOpenP
 
 function AgentAppearancePickerModal({
   appearances,
-  agentLabel,
   selectedAppearanceId,
-  isFollowed,
   syncing,
   onClose,
   onConfirm,
@@ -388,9 +330,7 @@ function AgentAppearancePickerModal({
           <div>
             <h3 className="modal-title">更换形象</h3>
             <div className="modal-subtitle">
-              {isFollowed
-                ? `确认后会把 ${agentLabel} 的新形象实时同步到设备端。`
-                : `确认后只保存 ${agentLabel} 的形象选择，不会立即同步设备端。`}
+              所有已跟随的 Agent 共用这个形象、人设和声音。
             </div>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="关闭" disabled={syncing}>
@@ -436,55 +376,6 @@ function AgentAppearancePickerModal({
           >
             {syncing ? <Loader size={14} className="spin" /> : <UploadCloud size={14} />}
             确认
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FollowAgentConfirmModal({
-  currentLabel,
-  nextLabel,
-  appearanceName,
-  reusesCurrentAppearance,
-  wifi,
-  builtin,
-  syncing,
-  onCancel,
-  onConfirm,
-}) {
-  const dialogRef = useDialogFocus(onCancel, syncing);
-  return (
-    <div className="modal-backdrop" onClick={syncing ? undefined : onCancel}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="切换跟随 Agent" tabIndex={-1}
-        className="modal-card channel-switch-confirm-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-header">
-          <div>
-            <h3 className="modal-title">切换跟随 Agent</h3>
-            <div className="modal-subtitle">设备端同一时间只展示一个 Agent 的实时状态。</div>
-          </div>
-          <button className="icon-btn" onClick={onCancel} aria-label="关闭" disabled={syncing}>
-            <X size={16} />
-          </button>
-        </div>
-        <div className="modal-body channel-switch-confirm-modal__body">
-          <div className="message-banner message-banner--muted channel-switch-confirm-modal__message">
-            将设备端跟随的 Agent 从 {currentLabel || "当前 Agent"} 切换为 {nextLabel || "目标 Agent"}。
-            {wifi?.appearanceCapacity
-              ? builtin ? `将核对设备上的内置「${appearanceName}」并切换。`
-                : `先核对设备上的「${appearanceName}」。设备未缓存相同版本时才传输素材。`
-              : wifi ? "当前固件仅支持通过 Wi-Fi 切换跟随，设备继续使用当前形象。"
-                : reusesCurrentAppearance ? `继续使用「${appearanceName}」。` : `同时同步「${appearanceName}」到设备。`}
-          </div>
-        </div>
-        <div className="channel-switch-confirm-modal__actions">
-          <button className="btn-secondary" type="button" onClick={onCancel} disabled={syncing}>
-            取消
-          </button>
-          <button className="btn-primary" type="button" onClick={onConfirm} disabled={syncing}>
-            {syncing && <Loader size={14} className="spin" />}
-            确认跟随
           </button>
         </div>
       </div>

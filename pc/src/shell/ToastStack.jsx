@@ -75,8 +75,10 @@ export function ToastProvider({ children }) {
   return <ToastContext.Provider value={value}>{children}</ToastContext.Provider>;
 }
 
+export function useOptionalToast() { return useContext(ToastContext); }
+
 export function useToast() {
-  const ctx = useContext(ToastContext);
+  const ctx = useOptionalToast();
   if (!ctx) throw new Error("useToast must be used inside <ToastProvider>");
   return ctx;
 }

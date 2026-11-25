@@ -469,7 +469,7 @@ def test_factory_board_metadata_uses_application_descriptor(tmp_path,suffix,expe
     assert factory.application_board_model(tmp_path)==expected
 
 
-@pytest.mark.parametrize("profile,programmed", [("nv3049-no-touch", False), (None, True)])
+@pytest.mark.parametrize("profile,programmed", [("nv3049", False), ("nv3049-no-touch", False), (None, True)])
 def test_public_packager_refuses_provisioned_display_before_export(tmp_path, profile, programmed):
     image = bytearray(b"\xff" * 0x10000)
     if programmed:
@@ -489,11 +489,41 @@ def test_public_packager_refuses_provisioned_display_before_export(tmp_path, pro
     assert not output.exists()
 
 
-def test_factory_panel_provisioning_is_opt_in_and_board_independent():
+def test_factory_panel_provisioning_is_opt_in_and_board_independent(tmp_path, monkeypatch):
     base = ["--build-dir", "."]
     assert factory.parse_args(base).display_profile is None
-    profile = ["--display-profile", "nv3049-no-touch"]
+    profile = ["--display-profile", "nv3049"]
     with pytest.raises(SystemExit):
         factory.parse_args(base + profile)
     args = factory.parse_args(base + profile + ["--nvs-generator", "generator.py"])
-    assert args.display_profile == "nv3049-no-touch" and args.verified_board_model is None
+    assert args.display_profile == "nv3049" and args.verified_board_model is None
+
+    def generate(command):
+        csv, output, size = command[-3:]
+        assert Path(csv).read_text().splitlines() == [
+            "key,type,encoding,value", "pet_lcd,namespace,,", "profile,data,u8,1"]
+        Path(output).write_bytes(bytes(int(size, 0)))
+
+    monkeypatch.setattr(factory, "run_checked", generate)
+    assert factory.generate_factory_nvs(tmp_path, args.nvs_generator, None, None, 0x6000, args.display_profile).is_file()
+
+
+@pytest.mark.parametrize("old_profile", ["nv3049-no-touch", "hd28142c22"])
+def test_retired_factory_profiles_rejected_before_generation(tmp_path, old_profile):
+    with pytest.raises(SystemExit):
+        factory.parse_args(["--build-dir", ".", "--display-profile", old_profile,
+                            "--nvs-generator", "generator.py"])
+    with pytest.raises(ValueError, match="unknown factory display profile"):
+        factory.generate_factory_nvs(tmp_path, Path("generator.py"), None, None, 0x6000, old_profile)
+    assert not list(tmp_path.iterdir())
+
+
+def test_public_packager_rejects_profile_option_before_opening_inputs(tmp_path):
+    result = subprocess.run(
+        ["node", str(REPOSITORY / "pc/scripts/package-factory-release.mjs"),
+         "--build-dir", str(tmp_path), "--output", str(tmp_path / "out"),
+         "--display-profile", "hd28142c22"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode != 0 and "unexpected argument: --display-profile" in result.stderr
+    assert not list(tmp_path.iterdir())

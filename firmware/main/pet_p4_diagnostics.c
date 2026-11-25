@@ -511,21 +511,23 @@ static char *prepare_status(
   pet_lcd_panel_model_t panel = pet_p4_lcd_panel_model();
   const bool nv3049 = panel == PET_LCD_PANEL_NV3049;
   const bool identified = panel != PET_LCD_PANEL_UNKNOWN;
-  cJSON_AddStringToObject(runtime, "lcdProfile",
-    pet_p4_lcd_no_touch_profile() ? "nv3049-no-touch" : "auto");
-  cJSON_AddStringToObject(runtime, "lcdPanel", !identified ? "unidentified" : nv3049 ? "NV3049F" : "ST7701S");
+  pet_lcd_profile_t configured = pet_p4_lcd_configured_profile();
+  const bool st7102 = panel == PET_LCD_PANEL_ST7102;
+  cJSON_AddStringToObject(runtime, "lcdProfile", configured == PET_LCD_PROFILE_ST7102 ? "st7102" :
+    configured == PET_LCD_PROFILE_NV3049 ? "nv3049" : "auto");
+  cJSON_AddStringToObject(runtime, "lcdSelection", pet_p4_lcd_selection());
+  cJSON_AddStringToObject(runtime, "lcdPanel", pet_p4_lcd_panel_name());
   if (nv3049) {
-    cJSON_AddStringToObject(runtime, "lcdRgb888Converter",
-      pet_p4_lcd_nv3049_ppa_active() ? "ppa" : "cpu");
+    cJSON_AddStringToObject(runtime, "lcdRgb888Converter", "cpu");
     cJSON_AddNumberToObject(runtime, "lcdRefreshMaxGapMs",
       pet_p4_lcd_nv3049_max_refresh_gap() * portTICK_PERIOD_MS);
   }
   cJSON_AddNumberToObject(runtime, "lcdDsiLanes",
-    !identified ? 0 : nv3049 ? BSP_LCD_NV3049_LANES : BSP_LCD_MIPI_DSI_LANE_NUM);
+    !identified ? 0 : st7102 ? BSP_LCD_ST7102_LANES : nv3049 ? BSP_LCD_NV3049_LANES : BSP_LCD_MIPI_DSI_LANE_NUM);
   cJSON_AddNumberToObject(runtime, "lcdDsiLaneMbps",
-    !identified ? 0 : nv3049 ? BSP_LCD_NV3049_LANE_MBPS : BSP_LCD_MIPI_DSI_LANE_BITRATE_MBPS);
+    !identified ? 0 : st7102 ? BSP_LCD_ST7102_LANE_MBPS : nv3049 ? BSP_LCD_NV3049_LANE_MBPS : BSP_LCD_MIPI_DSI_LANE_BITRATE_MBPS);
   cJSON_AddNumberToObject(runtime, "lcdPixelClockMHz",
-    !identified ? 0 : nv3049 ? BSP_LCD_NV3049_CLOCK_MHZ : BSP_LCD_DPI_CLOCK_MHZ);
+    !identified ? 0 : st7102 ? BSP_LCD_ST7102_CLOCK_MHZ : nv3049 ? BSP_LCD_NV3049_CLOCK_MHZ : BSP_LCD_DPI_CLOCK_MHZ);
 #else
   cJSON_AddNumberToObject(runtime, "lcdDsiLanes", BSP_LCD_MIPI_DSI_LANE_NUM);
   cJSON_AddNumberToObject(runtime, "lcdDsiLaneMbps", BSP_LCD_MIPI_DSI_LANE_BITRATE_MBPS);
@@ -1022,16 +1024,29 @@ bool pet_p4_diagnostics_handle_topic_with_reply(
       err == ESP_OK ? "input bindings restored to safe defaults" : esp_err_to_name(err)
     );
 #if BSP_LCD_PANEL_AUTO
+  } else if (strcmp(topic, "system/prepare-display-flash") == 0) {
+    const cJSON *target = cJSON_GetObjectItemCaseSensitive(payload, "boardDeviceId");
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (state && cJSON_IsString(target) && !strcmp(target->valuestring, state->board_device_id)
+        && pet_p4_lcd_panel_model() == PET_LCD_PANEL_NV3049 && !g_reboot_at_ms
+        && schedule_reboot_locked(state)) {
+      // If the flasher exits without entering ROM, restore the application display.
+      g_reboot_at_ms = esp_timer_get_time() / 1000ULL + 15000;
+      err = pet_p4_lcd_sleep_for_flash();
+    }
+    send_action(payload, send_line, ctx, "prepare-display-flash", err == ESP_OK,
+                err == ESP_OK ? "panel sleep confirmed" : esp_err_to_name(err));
   } else if (strcmp(topic, "system/lcd-profile") == 0) {
     const cJSON *profile = cJSON_GetObjectItemCaseSensitive(payload, "profile");
     const char *name = cJSON_IsString(profile) ? profile->valuestring : "";
-    const bool no_touch = strcmp(name, "nv3049-no-touch") == 0;
-    if (!no_touch && strcmp(name, "auto") != 0) {
-      send_action(payload, send_line, ctx, "lcd-profile", false, "expected auto or nv3049-no-touch");
+    const bool nv3049 = strcmp(name, "nv3049") == 0;
+    const bool st7102 = strcmp(name, "st7102") == 0;
+    if (!st7102 && !nv3049 && strcmp(name, "auto") != 0) {
+      send_action(payload, send_line, ctx, "lcd-profile", false, "expected auto, st7102 or nv3049");
     } else if (pet_p4_ota_active() || (state && state->asset_transfer_active)) {
       send_action(payload, send_line, ctx, "lcd-profile", false, "device transfer is active");
     } else {
-      esp_err_t err = pet_p4_lcd_save_no_touch_profile(no_touch);
+      esp_err_t err = pet_p4_lcd_save_profile(st7102 ? PET_LCD_PROFILE_ST7102 : nv3049 ? PET_LCD_PROFILE_NV3049 : PET_LCD_PROFILE_AUTO);
       send_action(payload, send_line, ctx, "lcd-profile", err == ESP_OK,
         err == ESP_OK ? "LCD profile saved; reboot to apply" : esp_err_to_name(err));
     }

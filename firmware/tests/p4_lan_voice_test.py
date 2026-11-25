@@ -30,17 +30,31 @@ static bool pet_device_wifi_online(void) { return online; }
 static void ota_wire_put_u32(uint8_t *p, uint32_t n) {
   for (unsigned i = 0; i < 4; ++i) p[i] = n >> (24 - i * 8);
 }
-typedef struct { unsigned session_queue_count; } pet_p4_runtime_state_t;
+#define PET_P4_AGENT_MAX 64
+#define PET_P4_SESSION_QUEUE_ID_MAX 128
+#define portMAX_DELAY 100
+#define LAN_LEASE_MS 10000
+static uint64_t client_seen_ms = 900;
+typedef struct { unsigned session_queue_count; char current_session_agent[64], current_session_id[128]; } pet_p4_runtime_state_t;
 #include "pet_p4_lan_voice.inc"
 
 int main(void) {
   pet_p4_runtime_state_t state = {0};
+  strcpy(state.current_session_agent, "workbuddy"); strcpy(state.current_session_id, "work-1");
+  pet_p4_lan_select_session(&state, -1);
+  assert(manual_selection.sequence == 1 && manual_selection.direction == -1);
+  assert(!strcmp(manual_selection.agent, "workbuddy"));
+  atomic_store(&usb_client_active, true);
+  pet_p4_lan_select_session(&state, 1);
+  assert(manual_selection.sequence == 1);
+  atomic_store(&usb_client_active, false);
   bool empty = false;
   uint8_t reply[8] = {0};
   assert(!pet_p4_lan_voice_press(&state, 1, now));
   assert(!lan_voice_claim(1, generation, &empty));
   pet_p4_lan_voice_button(1, true);
   assert(pet_p4_lan_voice_press(&state, 1, now));
+  assert(!strcmp(pressed_selection.agent, "workbuddy") && !strcmp(pressed_selection.session, "work-1"));
   lan_voice_status(generation, reply);
   assert(reply[3] == 1 && !reply[7]);
   assert(!lan_voice_claim(1, generation + 1, &empty));

@@ -58,9 +58,9 @@ body,.app-shell,.app-main,.app-content {
   gap:4px;
 }
 .sidebar-nav__item {
-  border-radius:4px;
+  border-radius:8px;
   font-size:13px;
-  min-height:40px;
+  min-height:36px;
 }
 .sidebar-nav__item.is-active {
   box-shadow:none!important;
@@ -171,6 +171,19 @@ button,input,select,textarea {
   grid-column:2;
   grid-row:1;
 }
+.channel-row__follow > :is(button, span) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 84px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 6px;
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+}
+
 .channel-row__settings {
   grid-column:1/-1;
   padding-inline-start:38px;
@@ -200,6 +213,63 @@ button,input,select,textarea {
   font:700 21px Georgia;
   color:var(--text);
   margin-left:8px;
+}
+.companion-follow {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.companion-follow__label {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.companion-follow__options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.companion-follow .companion-follow__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 4px 9px 4px 17px;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.companion-follow .companion-follow__option:hover {
+  color: var(--text);
+}
+.companion-follow .companion-follow__option[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface-muted, #f4f4f4);
+}
+.companion-follow__option[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-action);
+}
+.companion-follow__option:focus-visible {
+  outline: 2px solid var(--accent-action);
+  outline-offset: 2px;
 }
 .companion-hero__actions {
   display:flex;
@@ -529,7 +599,8 @@ dialog.devin-config-dialog {
   background-color: var(--accent-soft);
 }
 .app-shell .app-sidebar .sidebar-nav button[aria-current="page"] {
-  background-color: rgb(0 0 0 / 3%);
+  background-color: rgb(0 0 0 / 7%);
+  border-radius: 8px;
 }
 .app-sidebar .sidebar-nav button[aria-current="page"] svg {
   color: var(--accent);

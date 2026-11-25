@@ -159,7 +159,7 @@ export function buildP4ConversationQueue(
   sessions,
   previousQueue = [],
   nowMs = Date.now(),
-  { authoritativeSnapshot = false } = {},
+  { authoritativeSnapshot = false, restoreRecentTerminal = false } = {},
 ) {
   const eligibleSessions = buildP4RoutingSessions(sessions).filter((session) => (
     !isActiveDeviceSession(session) || p4SessionHasMeaningfulTitle(session)
@@ -169,7 +169,7 @@ export function buildP4ConversationQueue(
     eligibleSessions,
     nowMs,
     P4_DEVICE_SESSION_LIMIT,
-    { authoritativeSnapshot },
+    { authoritativeSnapshot, restoreRecentTerminal },
   );
 }
 

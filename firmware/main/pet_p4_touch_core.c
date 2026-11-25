@@ -125,12 +125,11 @@ bool pet_p4_touch_cst328_to_ui(int raw_x, int raw_y, unsigned resolution_x,
       raw_x < 0 || raw_y < 0 || (unsigned)raw_x >= resolution_x ||
       (unsigned)raw_y >= resolution_y || !ui_x || !ui_y) return false;
 
-  /* Match the corrected NV3049 scanout orientation (479 - UI y, UI x). */
   const unsigned max_x = resolution_x - 1;
   const unsigned max_y = resolution_y - 1;
-  *ui_x = (int)(((unsigned)raw_y * (PET_P4_PANEL_HEIGHT - 1) + max_y / 2) / max_y);
-  *ui_y = PET_P4_PANEL_WIDTH - 1 -
-          (int)(((unsigned)raw_x * (PET_P4_PANEL_WIDTH - 1) + max_x / 2) / max_x);
+  *ui_x = PET_P4_PANEL_HEIGHT - 1 -
+          (int)(((unsigned)raw_y * (PET_P4_PANEL_HEIGHT - 1) + max_y / 2) / max_y);
+  *ui_y = (int)(((unsigned)raw_x * (PET_P4_PANEL_WIDTH - 1) + max_x / 2) / max_x);
   return true;
 }
 

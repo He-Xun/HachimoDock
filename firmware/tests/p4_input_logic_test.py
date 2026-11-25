@@ -104,3 +104,60 @@ int main(void) {
     binary = tmp_path / "home-back"
     subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(file), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+def test_pet_direction_actions_route_by_page_and_voice_scope(tmp_path):
+    source = (ROOT / "main/pet_p4_input.c").read_text()
+    begin = source.index("static bool apply_local_action(")
+    end = source.index('  if (strcmp(binding->action, "page_toggle")', begin)
+    harness = tmp_path / "navigation.c"
+    harness.write_text(r'''
+#include "pet_p4_protocol.h"
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#define PET_P4_SYSTEM_WIFI 1
+typedef struct { const char *action; } pet_p4_input_binding_t;
+static int navigation = 9, catalog = 0;
+static bool conversation;
+static bool pet_p4_conversation_active(const pet_p4_runtime_state_t *s) { (void)s; return conversation; }
+static bool pet_p4_audio_conversation_active(void) { return false; }
+static void pet_p4_lan_select_session(const pet_p4_runtime_state_t *s, int d) { (void)s; navigation = d; }
+static bool pet_p4_miniapp_catalog_move(int d) { catalog = d; return true; }
+static void copy_text(char *out, size_t n, const char *text) { snprintf(out, n, "%s", text); }
+''' + source[begin:end] + r'''
+  return false;
+}
+int main(void) {
+  static pet_p4_runtime_state_t state;
+  char result[48] = "";
+  pet_p4_input_binding_t binding = {"nav_left"};
+  strcpy(state.screen_page, "main");
+  state.session_queue_count = 2;
+  state.current_session_index = 1;
+  strcpy(state.session_queue[1].id, "second");
+  assert(apply_local_action(&state, &binding, 1, result, sizeof(result)));
+  assert(navigation == -1 && state.current_session_index == 1);
+  binding.action = "nav_right";
+  assert(apply_local_action(&state, &binding, 2, result, sizeof(result)) && navigation == 1);
+  binding.action = "session_next";
+  assert(apply_local_action(&state, &binding, 3, result, sizeof(result)));
+  assert(navigation == 0 && !strcmp(state.current_session_id, "second"));
+  state.voice_feedback.phase = PET_VOICE_DRAFT;
+  binding.action = "nav_left";
+  assert(apply_local_action(&state, &binding, 4, result, sizeof(result)));
+  assert(!strcmp(result, "navigation_blocked") && navigation == 0);
+  state.voice_feedback.phase = 0;
+  conversation = true;
+  assert(apply_local_action(&state, &binding, 5, result, sizeof(result)) && navigation == 0);
+  conversation = false;
+  strcpy(state.screen_page, "components");
+  assert(apply_local_action(&state, &binding, 6, result, sizeof(result)));
+  assert(catalog == -1 && navigation == 0 && !strcmp(result, "component_select"));
+  strcpy(state.screen_page, "app");
+  assert(!apply_local_action(&state, &binding, 7, result, sizeof(result)));
+}
+''')
+    binary = tmp_path / "navigation"
+    subprocess.run(["cc", "-std=c11", "-Wall", "-Werror", "-I", str(ROOT / "main"),
+                    "-I", str(ROOT / "tests/vendor/cjson"), str(harness), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True)

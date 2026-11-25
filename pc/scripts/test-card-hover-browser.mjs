@@ -30,8 +30,8 @@ try {
   });
 
   async function desktopTheme() {
-    await page.addStyleTag({ path: fileURLToPath(new URL("../src/companion-theme.css", import.meta.url)) });
     await page.addStyleTag({ content: "*, *::before, *::after { transition-duration: 0s !important; }" });
+    await page.addStyleTag({ path: fileURLToPath(new URL("../src/companion-theme.css", import.meta.url)) });
   }
   const paint = target => target.evaluate(node => [null, "::before", "::after"].map(pseudo => {
     const s = getComputedStyle(node, pseudo);

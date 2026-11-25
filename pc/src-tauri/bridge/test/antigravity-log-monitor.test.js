@@ -166,12 +166,15 @@ test("an idle-clear timeout of zero preserves the reply", (t) => {
   assert.equal(events.at(-1).content, "keep this");
 });
 
-test("bridge requires native detection and an explicit Antigravity selection", () => {
+test("bridge requires native detection and explicit Antigravity membership", () => {
   for (const CLAWD_SELECTED_AGENT_ID of ["", "workbuddy", "antigravity"]) {
     for (const CLAWD_ENABLE_ANTIGRAVITY_MONITOR of [undefined, "false", "true"]) {
       assert.equal(antigravityMonitorEnabled({
         CLAWD_SELECTED_AGENT_ID, CLAWD_ENABLE_ANTIGRAVITY_MONITOR, CLAWD_ENABLED_AGENTS: "antigravity",
-      }), CLAWD_SELECTED_AGENT_ID === "antigravity" && CLAWD_ENABLE_ANTIGRAVITY_MONITOR === "true");
+      }), CLAWD_ENABLE_ANTIGRAVITY_MONITOR === "true");
+      assert.equal(antigravityMonitorEnabled({
+        CLAWD_SELECTED_AGENT_ID, CLAWD_ENABLE_ANTIGRAVITY_MONITOR, CLAWD_ENABLED_AGENTS: "codex",
+      }), false);
     }
   }
 });

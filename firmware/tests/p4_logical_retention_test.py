@@ -141,6 +141,7 @@ def test_actual_common_overlay_commands_match_old_path_and_use_captured_state(tm
 #include "pet_p4_logical_retention.h"
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
 #define PET_P4_UI_WIDTH 640
 #define PET_P4_UI_HEIGHT 480
 #define P4_BOOT_DIAGNOSTIC_MS 10000
@@ -175,14 +176,14 @@ int main(void){
    now<=P4_BOOT_DIAGNOSTIC_MS);
   memset(commands,0,sizeof(commands));count=0;
   draw_touch_feedback(state,now);
-  if(state)draw_common_connection(pet_connection_banner(state->connected,state->host_last_seen_ms>0));
+  if(state)draw_common_connection(pet_connection_banner(state->connected,state->host_last_seen_ms>0),NULL);
   draw_boot_diagnostic(now);
   unsigned wanted=count;memcpy(expected,commands,sizeof(commands));
   /* Mutating the ambient state cannot change the already captured plan. */
   memset(&s,0,sizeof(s));s.connected=true;s.asset_family_count=77;
   memset(commands,0,sizeof(commands));count=0;
   if(p.touch)draw_touch_feedback_pixels(p.touch_x,p.touch_y);
-  draw_common_connection(p.banner);if(p.boot)draw_boot_diagnostic(now);
+  draw_common_connection(p.banner,NULL);if(p.boot)draw_boot_diagnostic(now);
   assert(count==wanted);
   for(unsigned i=0;i<count;i++){
    command_t a=expected[i],b=commands[i];

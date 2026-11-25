@@ -327,7 +327,7 @@ class AgentSessionBus {
           }
           return session;
         });
-        if (agentId === "claude-code" || agentId === "codex" || agentId === "mimocode" || agentId === "workbuddy" || agentId === "devin") {
+        if (agentId === "claude-code" || agentId === "codex" || agentId === "mimocode" || agentId === "workbuddy" || agentId === "devin" || agentId === "cursor-agent") {
           for (const status of Array.isArray(statuses) ? statuses : []) {
             const id = normalizeStatusId(status?.id);
             if (!id || seen.has(id)) continue;
@@ -338,7 +338,7 @@ class AgentSessionBus {
               : "";
             const title = agentId === "codex"
               ? [statusTitle, displayTitle].find((value) => value && value !== "Codex 会话") || ""
-              : statusTitle || displayTitle || (agentId === "devin" ? "Devin 会话" : agentId === "workbuddy" ? "WorkBuddy 会话" : agentId === "mimocode" ? "MiMoCode 会话" : "Claude 会话");
+              : statusTitle || displayTitle || (agentId === "devin" ? "Devin 会话" : agentId === "workbuddy" ? "WorkBuddy 会话" : agentId === "mimocode" ? "MiMoCode 会话" : agentId === "cursor-agent" ? "Cursor 会话" : "Claude 会话");
             const resolvedDisplayTitle = agentId === "codex" && displayTitle === "Codex 会话"
               ? title
               : displayTitle || title;
@@ -554,6 +554,13 @@ class AgentSessionBus {
         });
         return;
       }
+    } else if (!resolvedSessionCwd && agentId === "cursor-agent" && this.sessionStatusProvider) {
+      // Cursor transcript directories encode workspace names lossily. The hook
+      // reports the real workspace for the exact conversation being resumed.
+      const statuses = await this.sessionStatusProvider(agentId);
+      const current = Array.isArray(statuses) && statuses.find((row) =>
+        row?.id === resolvedSessionId || row?.id === `${agentId}:${resolvedSessionId}`);
+      if (typeof current?.cwd === "string") resolvedSessionCwd = current.cwd;
     } else if (!resolvedSessionCwd) {
       // Caller pinned a specific session id but didn't tell us its cwd —
       // walk listSessions to look it up.

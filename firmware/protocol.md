@@ -2,23 +2,30 @@
 
 ## Display profile
 
-Wi-Fi 6 and Pico v1/v3 use the existing firmware project identity for both
-LCDs on each target. The default ST7701S path starts the display before configuring legacy
-touch. A verified CST328 identity or an explicit USB profile selects NV3049F.
-A failed probe or I2C timeout leaves the standard panel path available.
-
-The physical USB protocol can save the mode for the next boot:
+The four release targets support `auto` (factory default), `nv3049` and
+`st7102` through physical USB. A saved hint is used when hardware evidence
+is inconclusive. Example for a known BOE 480×640 module:
 
 ```json
-{"topic":"system/lcd-profile","payload":{"profile":"nv3049-no-touch","requestId":"lcd-profile-config"}}
+{"topic":"system/lcd-profile","payload":{"profile":"st7102","requestId":"lcd-profile-config"}}
 ```
 
-The supported profiles are `auto` and `nv3049-no-touch`. Confirm the
-`diagnostics/action` reply reports success before sending `system/reboot`.
+The BOE ST7102 uses two 600 Mbps lanes and RGB565. Both NV3049F assemblies
+use two 500 Mbps lanes and the same scan orientation. A verified DSI identity
+takes priority over touch evidence. The NV3049F identity is `30 49 03` in
+both the combined and single-register reads. A uniquely verified ST7123
+or CST328 identifies the corresponding module. A saved hint is checked next.
+Absent all three, auto selects ST7701S. Diagnostics distinguish `verified-panel-id`,
+`verified-touch`, `configured`, `legacy-default` and `pending`.
+Confirm the `diagnostics/action` reply reports success before sending `system/reboot`.
 The profile is retained in NVS across application OTA. The runtime diagnostics
 include `lcdPanel`, `lcdProfile`, the selected DSI timing and the existing
 touch health fields. NV3049F also reports `lcdRgb888Converter` and
 `lcdRefreshMaxGapMs`. A transfer in progress blocks profile changes.
+
+## USB factory flash preparation
+
+A running NV3049F device advertises `prepareDisplayForFlash: true` in its solicited `debug/identity` response. After validating the selected image and board, the packaged flasher sends `system/prepare-display-flash` with the same physical board ID and a new request ID. The application handshake requires a matching successful `diagnostics/action` for `prepare-display-flash` before the host resets the device. The device sends DCS display-off and sleep-in, then checks the sleep power mode twice. If flashing is abandoned and the application is still running, it reboots after 15 seconds and reinitializes the panel. For WiFi6 v1.3 and v3.2 first installs, the factory tool can identify an attached NV3049F and confirm sleep over DSI from the ROM downloader. The factory launchers select the available protection path automatically. See BUILD.md for board identification. A verified legacy display can use the legacy option.
 
 ## Device approval modal
 
@@ -1297,6 +1304,15 @@ Current Session example:
 }
 ```
 
+In input configuration v10, joystick Left and Right default to `nav_left` and
+`nav_right`. On the pet screen they cycle through the desktop's ordered list of
+up to three followed Agents. Up and Down select a session of the active Agent.
+All Agents share the desktop-selected appearance. USB navigation events include
+the originating Agent and boot identity. On paired Wi-Fi the device reports a
+sequenced selection and the desktop acknowledges it in the session snapshot.
+During voice capture, a pending draft, or realtime conversation, navigation waits
+until the current interaction ends. The component catalog handles directions locally.
+
 For the compatibility action IDs `session_previous` and `session_next`, current
 firmware resolves the action inside the visible peer page. On `main` it reports
 the selected Session metadata so the desktop follows the same card. On
@@ -1417,7 +1433,7 @@ PC to board:
   "topic": "input/config",
   "payload": {
     "requestId": "input-42",
-    "version": 9,
+    "version": 10,
     "bindings": [
       {"event":"button.sw1.short_press","action":"page_enter","value":""},
       {"event":"button.sw1.long_press","action":"disabled","value":""},
@@ -1431,8 +1447,8 @@ PC to board:
       {"event":"button.encoder.short_press","action":"page_enter","value":""},
       {"event":"button.encoder.long_press","action":"disabled","value":""},
       {"event":"button.encoder.hold","action":"disabled","value":""},
-      {"event":"knob.rotate_ccw","action":"session_previous","value":""},
-      {"event":"knob.rotate_cw","action":"session_next","value":""},
+      {"event":"knob.rotate_ccw","action":"nav_left","value":""},
+      {"event":"knob.rotate_cw","action":"nav_right","value":""},
       {"event":"joystick.up","action":"session_previous","value":""},
       {"event":"joystick.down","action":"session_next","value":""}
     ]
@@ -1441,12 +1457,12 @@ PC to board:
 ```
 
 Allowed actions are `disabled`, `voice_ptt`, `agent_enter`, `agent_prompt`,
-`session_next`, `session_previous`, `session_clear`, `miniapp_screen_tap`,
+`nav_left`, `nav_right`, `session_next`, `session_previous`, `session_clear`, `miniapp_screen_tap`,
 `miniapp_screen_long_press`, `component_center`, `miniapp_action`,
 `page_toggle`, `page_enter`, `page_back`, `page_main`, and `page_app`.
 The firmware keeps this full set for stored-config and component compatibility.
 Pet Manager's P4 button menu exposes only custom prompt, voice input,
-previous/next item, clear sessions, pet/component page toggle, confirm, back/cancel,
+left/right, previous/next item, clear sessions, pet/component page toggle, confirm, back/cancel,
 and unbound.
 
 SW1 short press and joystick center short press both default to `page_enter`:

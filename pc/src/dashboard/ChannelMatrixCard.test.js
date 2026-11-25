@@ -37,11 +37,7 @@ test("ChannelMatrixCard keeps supported agents visible and marks unavailable cli
   assert.match(source, /className="channel-row__unavailable"/);
   assert.match(source, /不可用/);
   assert.match(source, /const canFollow = Boolean\(usb\?\.connected \|\| wifi\)/);
-  assert.match(source, /disabled=\{syncing \|\| !canFollow\}/);
-  assert.match(source, /followAgent\(agentId, appearance/);
-  assert.match(source, /当前固件仅支持通过 Wi-Fi 切换跟随，设备继续使用当前形象/);
-  assert.match(source, /将核对设备上的内置/);
-  assert.match(source, /设备未缓存相同版本时才传输素材/);
+  assert.match(source, /enabledAgents.size >= 3/);
   assert.match(source, /已配置形象 · 待设备确认/);
 
   const unavailableRule = extractCssRule(styles, ".channel-row.is-undetected");
@@ -54,12 +50,12 @@ test("ChannelMatrixCard keeps supported agents visible and marks unavailable cli
 test("ChannelMatrixCard destructures multiple fields from useDeviceContext", () => {
   assert.match(source, /useDeviceContext\s*\(\s*\)/);
   assert.match(source, /appearances/);
-  assert.match(source, /agentAppearanceMap/);
+  assert.match(source, /enabledAgents/);
   assert.match(source, /agentOptions/);
   assert.match(source, /currentDisplay/);
   assert.match(source, /\busb\b/);
   assert.match(source, /applyDesktopPet/);
-  assert.match(source, /saveAgentAppearance/);
+  assert.match(source, /rememberAgent/);
   assert.match(source, /refresh/);
 });
 
@@ -84,7 +80,7 @@ test("Non-followed agents show a follow button while the active one is marked fo
   assert.match(source, /跟随/);
   assert.match(source, /channel-row__follow-current/);
   assert.match(source, /channel-row__follow-button/);
-  assert.match(source, /requestFollow\(agent\.id\)/);
+  assert.match(source, /changeFollow\(enableQueuedAgent, agent\.id\)/);
 });
 
 test("Removes redundant Agent guidance and device-session controls", () => {
@@ -96,11 +92,9 @@ test("Removes redundant Agent guidance and device-session controls", () => {
   assert.doesNotMatch(styles, /\.session-display-setting/);
 });
 
-test("Agent appearance changes save locally unless the agent is currently followed", () => {
-  assert.match(source, /BUILTIN_TERRIER_APPEARANCE_ID/);
-  assert.match(source, /saveAgentAppearance\(agentId, appearance\.id\)/);
-  assert.match(source, /agentId === activeAgentId/);
-  assert.match(source, /applyDesktopPet\(agentId, appearance/);
+test("The shared appearance picker targets the pet", () => {
+  assert.match(source, /onConfirm=\{handleConfirmAppearance\}/);
+  assert.match(source, /applyDesktopPet\(appearance/);
 });
 
 test("Opening the appearance picker is immediate while disk records refresh in the background", () => {
@@ -111,15 +105,8 @@ test("Opening the appearance picker is immediate while disk records refresh in t
   assert.match(source, /onClick=\{\(\)\s*=>\s+openPicker\(activeAgentId\)\}/);
 });
 
-test("Follow confirmation describes appearance handling for the active connection", () => {
-  assert.match(source, /setPendingFollow\(\{ agentId, appearance \}\)/);
-  assert.match(source, /function FollowAgentConfirmModal\s*\(/);
-  assert.match(source, /确认跟随/);
-  assert.match(source, /同步「\$\{appearanceName\}」到设备/);
-  assert.match(source, /当前固件仅支持通过 Wi-Fi 切换跟随，设备继续使用当前形象/);
-  assert.match(source, /将核对设备上的内置/);
-  assert.match(source, /设备未缓存相同版本时才传输素材/);
-  assert.match(source, /已配置形象 · 待设备确认/);
+test("All selected agents share the persona and voice", () => {
+  assert.match(source, /所有已跟随的 Agent 共用这个形象、人设和声音/);
 });
 
 test("USB appearance sync progress stays inline and survives dashboard tab unmounts", () => {
@@ -149,15 +136,9 @@ test("USB appearance sync progress stays inline and survives dashboard tab unmou
   assert.match(barRule, /width:\s*var\(--sync-progress\)/);
 });
 
-test("Follow-only switches are not presented as appearance transfers", () => {
-  // Same appearance on the device: no bytes move, so no percent and no abort.
-  assert.match(source, /const followOnly = !wifi && appearance\.id === currentDisplay\.appearance\?\.id/);
-  assert.match(source, /syncProgress\.followOnly \? "正在切换跟随" : "正在切换形象"/);
-  assert.match(source, /\{!syncProgress\.followOnly && <Button/);
-  assert.match(source, /text: "正在确认…"/);
-  assert.match(source, /initialProgress: followOnly/);
-  assert.match(source, /!syncProgress\.indeterminate && <div className="channel-matrix-sync__meter">/);
-  assert.match(source, /indeterminate: !hasBytes/);
+test("Changing focus calls the selection handler independently of appearance transfer", () => {
+  assert.match(source, /changeFollow\(rememberAgent, id\)/);
+  assert.doesNotMatch(source, /followAgent\(agentId, appearance/);
 });
 
 test("AgentAppearancePickerModal subcomponent is declared in the same file", () => {

@@ -118,7 +118,7 @@ function startMimoDesktopMonitor({ onState, filename = databasePath(), onUnavail
         onState({
           agent_id: "mimocode",
           state,
-          event: `mimo-desktop.${state}`,
+          event: sameTurn ? `mimo-desktop.${state}` : "session.pre",
           session_id: turn.sessionId,
           display_title: "MiMo Desktop",
         });

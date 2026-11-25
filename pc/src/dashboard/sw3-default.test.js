@@ -61,7 +61,7 @@ test('version gate migrates old v8 SW3 default but does not reinterpret identica
  assert.equal(actions.p4_sw3_long,'disabled');
 });
 
-test('whole-board v7 migration already requires SW3 long settings and changes only short navigation',()=>{
+test('whole-board v7 migration already requires SW3 long settings and upgrades short navigation and joystick defaults',()=>{
  const src=readFileSync(new URL('../component-center/button-config.js',import.meta.url),'utf8');
  const start=src.indexOf('const P4_V7_SHIPPED_DEFAULT_BINDINGS =');
  const end=src.indexOf('export function migrateP4V7ShippedBoardDefaults',start);
@@ -70,7 +70,7 @@ test('whole-board v7 migration already requires SW3 long settings and changes on
  const response={version:7,bindings:Object.entries(defaults).map(([event,action])=>({event,action,value:''}))};
  const result=migrateP4V7ShippedBoardDefaults(response,'esp-p4');assert(result.migrated);
  const changed=result.response.bindings.filter((b,i)=>b.action!==response.bindings[i].action).map(b=>b.event);
- assert.deepEqual(changed,['button.sw1.short_press','button.sw3.short_press']);
+ assert.deepEqual(changed,['button.sw1.short_press','button.sw3.short_press','knob.rotate_cw','knob.rotate_ccw','joystick.up','joystick.down']);
  const disabled=structuredClone(response);disabled.bindings.find(b=>b.event==='button.sw3.long_press').action='disabled';
  const kept=migrateP4V7ShippedBoardDefaults(disabled,'esp-p4');assert.equal(kept.migrated,false);assert.equal(kept.response,disabled);
 });

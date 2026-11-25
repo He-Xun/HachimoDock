@@ -100,8 +100,21 @@ function savedSpeechProfiles(status) {
   };
 }
 
+const MODEL_SECTIONS = [
+  ["speech", "语音识别与合成"],
+  ["dialogue", "对话大模型"],
+  ["avatar", "形象生成"],
+  ["network", "云服务网络"],
+];
+
+// Keep section headings clear of the sticky navigation and its surrounding shadow.
+const navigationOffset = nav => nav.getBoundingClientRect().height + 12;
+
 export default function ApiSettings({ onBack, configReadError = "", active = true }) {
   const usageHelp = useUsageHelp();
+  const navigationRef = useRef(null);
+  const clampedJump = useRef(null);
+  const [activeSection, setActiveSection] = useState("speech");
   const [savedVideoConfigs, setSavedVideoConfigs] = useState(loadVideoConfigs);
   const [videoConfigs, setVideoConfigs] = useState(() => Object.fromEntries(Object.entries(savedVideoConfigs)
     .map(([id, config]) => [id, { ...config, apiKey: "" }])));
@@ -168,6 +181,37 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
   const mimo = mimoConnection(voiceChat.llmProvider);
   const llmScope = voiceChat.llmProvider === "custom" ? "custom:" + cleanEndpoint(voiceChat.llmBaseUrl) : voiceChat.llmProvider;
   useEffect(() => setForgetScope(null), [llmScope]);
+  useEffect(() => {
+    if (!active) return undefined;
+    const nav = navigationRef.current;
+    const sections = MODEL_SECTIONS.map(([key]) => document.getElementById(`model-settings-${key}`));
+    const update = () => {
+      const root = document.scrollingElement;
+      const atBottom = root.scrollTop > 0 && root.scrollTop + root.clientHeight >= root.scrollHeight - 1;
+      if (atBottom) {
+        setActiveSection(clampedJump.current ?? MODEL_SECTIONS.at(-1)[0]);
+        return;
+      }
+      clampedJump.current = null;
+      const cutoff = navigationOffset(nav) + 1; // Allow fractional scroll coordinates.
+      let current = 0;
+      for (let i = 1; i < sections.length; i++) {
+        if (sections[i].getBoundingClientRect().top <= cutoff) current = i;
+      }
+      setActiveSection(MODEL_SECTIONS[current][0]);
+    };
+    const observer = new ResizeObserver(update);
+    [nav, nav.parentElement, ...sections].forEach(element => observer.observe(element));
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      clampedJump.current = null;
+      observer.disconnect();
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [active]);
   const chatName = { doubao: "火山方舟", deepseek: "DeepSeek", mimo: "小米 MiMo", "mimo-token-plan-cn": "MiMo Token Plan", custom: "自定义" }[voiceChat.llmProvider];
   const speechBusy = asrState.pending || asrState.testing || asrState.loading
     || (asrProvider === "mimo" && (voiceChat.loading || !mimoFieldsKnown));
@@ -531,7 +575,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
   };
 
   return (
-    <div className="api-settings-page">
+    <div className="api-settings-page settings-surface" data-active={active}>
     <PageShell
       title="模型配置"
       subtitle="配置语音、对话和形象生成服务"
@@ -542,7 +586,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
       )}
     >
       {dirty && <p role="status" className="api-settings__draft">有未保存的修改。切换页面会保留草稿；关闭客户端前请保存。</p>}
-      <section className="api-settings__overview" aria-label="模型配置概览">
+      <section className="api-settings__overview region-card" aria-label="模型配置概览">
         <div className="api-settings__overview-icon" aria-hidden="true">
           <ShieldCheck size={22} />
         </div>
@@ -557,12 +601,17 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
         </div>
       </section>
 
-      <nav className="settings-section-links" aria-label="跳至模型配置项目">
-        {[["speech", "语音识别与合成"], ["dialogue", "对话大模型"], ["avatar", "形象生成"]].map(([key, label]) =>
-          <button key={key} type="button" onClick={() => {
+      <nav ref={navigationRef} className="settings-section-links" aria-label="跳至模型配置项目">
+        {MODEL_SECTIONS.map(([key, label]) =>
+          <button key={key} type="button" aria-current={activeSection === key ? "true" : undefined} onClick={() => {
             const section = document.getElementById(`model-settings-${key}`);
-            section?.focus({ preventScroll: true });
-            section?.scrollIntoView({ block: "start" });
+            section.focus({ preventScroll: true });
+            const distance = section.getBoundingClientRect().top - navigationOffset(navigationRef.current);
+            window.scrollBy({ top: distance, behavior: "instant" });
+            // A tall viewport can clamp several links to the same bottom position.
+            const root = document.scrollingElement;
+            clampedJump.current = root.scrollTop + root.clientHeight >= root.scrollHeight - 1 ? key : null;
+            setActiveSection(key);
           }}>{label}</button>
         )}
       </nav>
@@ -788,7 +837,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
         {voiceChat.llmWebSearch && <>
           <label className="ui-field">
             <span>检索来源</span>
-            <select value={voiceChat.llmSearchMode}
+            <select className="ui-control" value={voiceChat.llmSearchMode}
               disabled={voiceChat.llmPending || voiceChat.loading}
               onChange={event => setVoiceChat(current => ({ ...current, llmSearchMode: event.target.value }))}>
               <option value="auto">自动 · 当前服务商</option>
@@ -825,7 +874,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
             const isKling = provider.id === "kling";
             const isCustom = provider.id === "custom";
             return (
-              <section className="api-settings__provider" key={provider.id}>
+              <section className="api-settings__provider region-card" key={provider.id}>
                 <header className="api-settings__provider-head">
                   <span className="api-settings__service-mark" aria-hidden="true">
                     <Sparkles size={18} />
@@ -844,7 +893,7 @@ export default function ApiSettings({ onBack, configReadError = "", active = tru
                   </span>
                 </header>
 
-                <fieldset className="api-settings__provider-fields" disabled={Boolean(configReadError)} style={{border:0,padding:0,margin:0,minWidth:0}}>
+                <fieldset className="api-settings__provider-fields" disabled={Boolean(configReadError)}>
                   <label className="ui-field" htmlFor={`api-settings-${provider.id}-key`}>
                     <span className="ui-field__label">API Key</span>
                     <input

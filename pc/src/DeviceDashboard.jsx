@@ -102,6 +102,7 @@ import {
 
 // ---------- Voice config storage + constants (re-exported for BoardButtonPanel) ----------
 
+const EMPTY_DISMISSALS = Object.freeze({});
 export const VOICE_CONFIG_STORAGE_KEY = DEVICE_BUTTON_CONFIG_STORAGE_KEY;
 export const DEFAULT_VOICE_CONFIG = { enabled: true, trigger: "encoder_button.hold" };
 export const P4_RUNTIME_ID = "esp-p4";
@@ -120,8 +121,8 @@ export const DEFAULT_BUTTON_ACTIONS = {
   p4_sw3_long: "system_settings",
   p4_encoder_press: "page_enter",
   p4_encoder_long: "disabled",
-  p4_encoder_cw: "session_next",
-  p4_encoder_ccw: "session_previous",
+  p4_encoder_cw: "nav_right",
+  p4_encoder_ccw: "nav_left",
   p4_joystick_up: "session_previous",
   p4_joystick_down: "session_next",
 };
@@ -145,6 +146,8 @@ export const BUTTON_FUNCTION_OPTIONS = [
   { id: "voice_key_forward", label: "触发电脑语音输入", detail: "在宠物首页按键触发电脑听写。用 USB-C 串口时请保持 Pet Manager 在后台，macOS 需授予辅助功能权限。" },
   { id: "voice_ptt", label: "语音输入", detail: "绑定到长按：按住说话，松开追加到输入框，确认后发送。" },
   { id: "realtime_chat", label: "实时对话", detail: "在宠物界面触发后开始聊天，再次触发结束。组件运行时请先返回宠物界面。" },
+  { id: "nav_left", label: "向左", detail: "宠物首页切换到上一个已跟随的 Agent。" },
+  { id: "nav_right", label: "向右", detail: "宠物首页切换到下一个已跟随的 Agent。" },
   { id: "session_previous", label: "上一个", detail: "宠物界面切换到上一个会话气泡；组件中心切换到上一个组件。" },
   { id: "session_next", label: "下一个", detail: "宠物界面切换到下一个会话气泡；组件中心切换到下一个组件。" },
   { id: "session_clear", label: "清空主页会话", detail: "清除设备主页当前显示的全部会话；新会话或新活动会自动重新显示。" },
@@ -180,6 +183,7 @@ export const BOARD_BUTTON_CONTROL_ROWS = [
 const P4_CUSTOM_ACTION_OPTIONS = [
   "agent_prompt",
   "realtime_chat",
+  "nav_left", "nav_right",
   "session_previous",
   "session_next",
   "session_clear",
@@ -202,8 +206,8 @@ export const P4_BUTTON_CONTROL_ROWS = [
   { id: "p4_sw3_long", controlId: "p4_sw3", label: "SW3 长按", event: "button.sw3.long_press", holdEvent: "button.sw3.hold", voiceTriggerId: "sw3.hold", defaultAction: "system_settings", voiceFallbackAction: "disabled", actionOptions: ["voice_ptt", ...P4_CUSTOM_ACTION_OPTIONS, "voice_key_forward"], supportsValue: true },
   { id: "p4_joystick_up", controlId: "p4_joystick", label: "摇杆向上", event: "joystick.up", defaultAction: "session_previous", actionOptions: P4_CUSTOM_ACTION_OPTIONS, supportsValue: true },
   { id: "p4_joystick_down", controlId: "p4_joystick", label: "摇杆向下", event: "joystick.down", defaultAction: "session_next", actionOptions: P4_CUSTOM_ACTION_OPTIONS, supportsValue: true },
-  { id: "p4_encoder_ccw", controlId: "p4_joystick", label: "摇杆向左", event: "knob.rotate_ccw", defaultAction: "session_previous", actionOptions: P4_CUSTOM_ACTION_OPTIONS, supportsValue: true },
-  { id: "p4_encoder_cw", controlId: "p4_joystick", label: "摇杆向右", event: "knob.rotate_cw", defaultAction: "session_next", actionOptions: P4_CUSTOM_ACTION_OPTIONS, supportsValue: true },
+  { id: "p4_encoder_ccw", controlId: "p4_joystick", label: "摇杆向左", event: "knob.rotate_ccw", defaultAction: "nav_left", actionOptions: P4_CUSTOM_ACTION_OPTIONS, supportsValue: true },
+  { id: "p4_encoder_cw", controlId: "p4_joystick", label: "摇杆向右", event: "knob.rotate_cw", defaultAction: "nav_right", actionOptions: P4_CUSTOM_ACTION_OPTIONS, supportsValue: true },
   { id: "p4_encoder_press", controlId: "p4_joystick", label: "摇杆中按短按", event: "button.encoder.short_press", defaultAction: "page_enter", actionOptions: P4_CUSTOM_ACTION_OPTIONS, supportsValue: true },
   { id: "p4_encoder_long", controlId: "p4_joystick", label: "摇杆中按长按", event: "button.encoder.long_press", holdEvent: "button.encoder.hold", voiceTriggerId: "encoder_button.hold", defaultAction: "disabled", voiceFallbackAction: "disabled", actionOptions: ["voice_ptt", ...P4_CUSTOM_ACTION_OPTIONS, "voice_key_forward"], supportsValue: true },
 ];
@@ -394,7 +398,9 @@ function normalizeVoiceConfig(value = {}) {
   const storedButtonModelVersion = Number(value.buttonModelVersion || 0);
   const migrateLegacyP4Defaults = storedButtonModelVersion !== DEVICE_BUTTON_CONFIG_MODEL_VERSION
     && Object.keys(incoming).some((key) => key.startsWith("p4_"));
-  const previousP4Defaults = storedButtonModelVersion === 8
+  const previousP4Defaults = storedButtonModelVersion === 9
+    ? { ...DEFAULT_BUTTON_ACTIONS, p4_encoder_ccw: "session_previous", p4_encoder_cw: "session_next" }
+    : storedButtonModelVersion === 8
     ? P4_V8_DEFAULT_BUTTON_ACTIONS
     : storedButtonModelVersion === 7
     ? P4_V7_DEFAULT_BUTTON_ACTIONS
@@ -799,6 +805,54 @@ function voiceReducer(state, action) {
   }
 }
 
+function useVoiceBusStatus(active, selectedAgentId, voiceDispatch) {
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    const ctl = new AbortController();
+    const run = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        let body;
+        try {
+          body = await fetchAgentBusStatus(ctl.signal);
+        } catch {
+          if (cancelled || ctl.signal.aborted) return;
+          const runtime = await ensureBridgeRuntime();
+          if (!runtime?.running) {
+            throw new Error(runtime?.message || "本地 Bridge 未启动");
+          }
+          body = await fetchAgentBusStatus(ctl.signal);
+        }
+        if (!cancelled) voiceDispatch({ type: "set_bus_status", value: body });
+      } catch {
+        if (!cancelled) {
+          voiceDispatch({ type: "set_bus_status", value: { ok: false, agents: [] } });
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    // A live session feed already proves Bridge reachability. If the feed stalls
+    // or no Agent is followed, keep the recovery path available in the tray.
+    const check = () => {
+      if ((!active || document.hidden) && agentSessionFeedFresh(selectedAgentId, 2 * P4_SESSION_EVENT_POLL_MS)) return;
+      void run();
+    };
+    const resume = () => { if (active && !document.hidden) void run(); };
+    check();
+    const id = setInterval(check, 5000);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      cancelled = true;
+      ctl.abort();
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [active, selectedAgentId, voiceDispatch]);
+}
+
 // ---------- Component ----------
 
 export default function DeviceDashboard({ active = true, keyboardActive = false, binding, onUnbind, onOpenApiSettings, onOpenGallery, onOpenDeviceSettings }) {
@@ -826,6 +880,7 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
     realtimeChat,
     appearanceSync,
     setUsageHelp,
+    dismissedBySource, setDismissedBySource,
   } = useDeviceContext();
   const selectedAgentId = currentDisplay.agentId;
   const { push } = useToast();
@@ -866,7 +921,8 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
   const [firmwareTargetBoardDeviceId, setFirmwareTargetBoardDeviceId] = useState("");
   const [diagnosticsTargetBoardDeviceId, setDiagnosticsTargetBoardDeviceId] = useState("");
   const [diagnosticsWifiTarget, setDiagnosticsWifiTarget] = useState(null);
-  const [dismissedP4Sessions, setDismissedP4Sessions] = useState({});
+  const dismissScope = JSON.stringify([onlineBoardDeviceId, selectedAgentId]);
+  const dismissedP4Sessions = dismissedBySource[dismissScope] || EMPTY_DISMISSALS;
   const buttonConfigRevisionRef = useRef(0);
   const buttonConfigQueryTokenRef = useRef(0);
   const isP4Runtime = String(usb.runtime || "").toLowerCase() === P4_RUNTIME_ID;
@@ -885,7 +941,10 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
   wifiInputScopeRef.current = wifiInputScope;
   const voiceTarget = voiceRuntimeTarget(usb, selectedAgentId, wifi);
   const voiceOnWifi = voiceTarget.kind === "wifi";
-  const monitorVoiceRuntime = active || voiceTarget.kind === "legacy";
+  const [voicePanelOpen, setVoicePanelOpen] = useState(true);
+  const [chatPanelOpen, setChatPanelOpen] = useState(true);
+  const voicePanelVisible = active && voicePanelOpen;
+  const monitorVoiceRuntime = voicePanelVisible || voiceTarget.kind === "legacy";
   const p4VoiceRuntime = isP4Runtime || voiceOnWifi;
   const voiceTargetKeyRef = useRef(voiceTarget.key);
   // Update during render: an old Promise may settle before effect cleanup.
@@ -916,7 +975,7 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
     : agentScan?.pending
       ? "正在读取本机 CLI"
       : agentScan?.scannedAt
-        ? `已检测到 ${agentScan.detectedCount} 个 Agent，设备端仅显示当前跟随的 Agent 状态，对话结束后设备气泡保留显示 60 秒`
+        ? `已检测到 ${agentScan.detectedCount} 个 Agent，可跟随最多 3 个。宠物首页左右切换 Agent，上下翻看当前 Agent 的气泡。对话结束后气泡保留 60 秒`
         : "读取本机已安装的 CLI Agent";
 
   const handleRefreshAgents = useCallback(async () => {
@@ -1048,8 +1107,8 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
     : "";
 
   const mergeDismissedP4Sessions = useCallback((dismissed) => {
-    setDismissedP4Sessions((current) => ({ ...current, ...dismissed }));
-  }, []);
+    setDismissedBySource(current => ({ ...current, [dismissScope]: { ...current[dismissScope], ...dismissed } }));
+  }, [dismissScope]);
   const sessionFeed = useAgentSessionFeed({
     agentId: selectedAgentId,
     displayEnabled: true,
@@ -1057,7 +1116,8 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
   });
   const p4SessionSync = useP4SessionSync({
     enabled: isP4Runtime,
-    boardDeviceId: p4TargetBoardDeviceId,
+    boardDeviceId: usb.connected ? p4TargetBoardDeviceId : wifi?.boardDeviceId,
+    lanTarget: usb.connected ? null : wifi,
     agentId: selectedAgentId,
     usbConnected: usb.connected,
     usbConnectionId: usb.connectionId,
@@ -1075,52 +1135,7 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
   const selectedAgentRoutingSessions = sessionFeed.routingSessions;
   const selectedAgentSessionsLoaded = sessionFeed.loaded;
 
-  // Poll voice-bus status.
-  useEffect(() => {
-    let cancelled = false;
-    let inFlight = false;
-    const ctl = new AbortController();
-    const run = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        let body;
-        try {
-          body = await fetchAgentBusStatus(ctl.signal);
-        } catch {
-          if (cancelled || ctl.signal.aborted) return;
-          const runtime = await ensureBridgeRuntime();
-          if (!runtime?.running) {
-            throw new Error(runtime?.message || "本地 Bridge 未启动");
-          }
-          body = await fetchAgentBusStatus(ctl.signal);
-        }
-        if (!cancelled) voiceDispatch({ type: "set_bus_status", value: body });
-      } catch {
-        if (!cancelled) {
-          voiceDispatch({ type: "set_bus_status", value: { ok: false, agents: [] } });
-        }
-      } finally {
-        inFlight = false;
-      }
-    };
-    // A live session feed already proves Bridge reachability. If the feed stalls
-    // or no Agent is followed, keep the recovery path available in the tray.
-    const check = () => {
-      if ((!active || document.hidden) && agentSessionFeedFresh(selectedAgentId, 2 * P4_SESSION_EVENT_POLL_MS)) return;
-      void run();
-    };
-    const resume = () => { if (active && !document.hidden) void run(); };
-    check();
-    const id = setInterval(check, 5000);
-    document.addEventListener("visibilitychange", resume);
-    return () => {
-      cancelled = true;
-      ctl.abort();
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", resume);
-    };
-  }, [active, selectedAgentId]);
+  useVoiceBusStatus(voicePanelVisible, selectedAgentId, voiceDispatch);
 
   // Poll only after reading the connected device's identity and capability.
   useEffect(() => {
@@ -1771,8 +1786,11 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
         title="语音输入"
         summary={buildVoiceSummary(runtimeVoiceConfig, selectedVoiceTrigger)}
         defaultOpen
+        open={voicePanelOpen}
+        onOpenChange={setVoicePanelOpen}
       >
         <VoiceAssistantPanel
+          panelOpen={voicePanelVisible}
           state={{
             ...voiceState,
             deviceVoiceFlow,
@@ -1805,9 +1823,10 @@ export default function DeviceDashboard({ active = true, keyboardActive = false,
       <Card.Collapsible
         title="实时对话"
         summary={realtimeChat?.active ? `进行中 · ${realtimeStateLabel(realtimeChat.state)}` : "按设备上的「实时对话」键和当前形象聊天"}
-        defaultOpen
+        open={chatPanelOpen}
+        onOpenChange={setChatPanelOpen}
       >
-        <RealtimeChatPanel keyBound={realtimeChatKeyBound} onOpenApiSettings={onOpenApiSettings} onOpenGallery={onOpenGallery} onOpenPersona={() => setEditingPersona(currentDisplay?.appearance)} />
+        <RealtimeChatPanel keyBound={realtimeChatKeyBound} panelOpen={active && chatPanelOpen} onOpenApiSettings={onOpenApiSettings} onOpenGallery={onOpenGallery} onOpenPersona={() => setEditingPersona(currentDisplay?.appearance)} />
       </Card.Collapsible>
 
       <DeviceGuideModal

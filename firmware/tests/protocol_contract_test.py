@@ -2415,7 +2415,7 @@ def test_p4_hardware_inputs_are_debounced_persistent_and_configurable():
     assert "migrate_v7_config" in input_source
     assert "migrate_v8_config" in input_source
     assert "migrate_input_config" in input_source
-    assert "PET_P4_INPUT_CONFIG_VERSION 9" in read_required("main/pet_p4_input.h")
+    assert "PET_P4_INPUT_CONFIG_VERSION 10" in read_required("main/pet_p4_input.h")
     assert "center_binding" not in input_source
     assert '"page_toggle"' in input_source
     assert '"page_enter"' in input_source
@@ -2527,7 +2527,7 @@ def test_p4_device_ptt_stream_is_validated_and_relayed_by_pc():
     assert 'strcmp(binding->action, "voice_ptt") == 0' in input_source
     assert 'strcmp(gesture, "hold_start") == 0' in input_source
     assert 'strcmp(gesture, "hold_end") == 0' in input_source
-    assert "pet_p4_audio_capture_start_button(state && state->session_queue_count == 0, token)" in input_source
+    assert "pet_p4_audio_capture_start_button(state, token)" in input_source
     assert "pet_p4_audio_init" in main
     assert "g_transport_mutex" in main
     assert 'strcmp(topic, "audio/control") == 0' in protocol

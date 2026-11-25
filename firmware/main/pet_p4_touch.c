@@ -24,6 +24,10 @@
 #include "pet_p4_center_layout.h"
 #include "pet_p4_touch_core.h"
 #include "pet_p4_cst328.h"
+#if BSP_LCD_PANEL_AUTO
+#include "pet_p4_lcd.h"
+#include "pet_p4_touch_st7123.h"
+#endif
 
 #define PET_P4_TOUCH_SAMPLE_MS 15
 #define PET_P4_CST328_SAMPLE_MS 2
@@ -48,11 +52,13 @@ static int g_address;
 static bool g_ft6336;
 static bool g_cst826;
 #if BSP_LCD_PANEL_AUTO
+static pet_st7123_t g_st7123;
 static pet_cst328_info_t g_cst328_info;
 #endif
 static uint8_t g_chip_id, g_vendor_id;
 const char *pet_p4_touch_controller(void) {
 #if BSP_LCD_PANEL_AUTO
+  if (g_address == PET_ST7123_ADDRESS) return "ST7123";
   if (g_address == PET_CST328_ADDRESS) return "CST328";
 #endif
   return g_cst826 ? "CST826" : g_ft6336 ? "FT6336U" : g_touch ? "GT911" : "unidentified";
@@ -124,8 +130,8 @@ static void touch_task(void *arg) {
 #if BSP_LCD_PANEL_AUTO
   const bool nv3049 = g_address == PET_CST328_ADDRESS;
   if (nv3049) sample_period = pdMS_TO_TICKS(PET_P4_CST328_SAMPLE_MS);
-  const uint64_t cst_release_timeout_ms = 100;
-  uint64_t cst_last_contact_ms = 0;
+  const uint64_t release_timeout_ms = 100;
+  uint64_t last_contact_ms = 0;
 #endif
   pet_p4_touch_decoder_init(&decoder, PET_P4_TOUCH_SWIPE_THRESHOLD, PET_P4_TOUCH_LONG_PRESS_MS);
 
@@ -136,12 +142,31 @@ static void touch_task(void *arg) {
     int ui_x = decoder.current_x;
     int ui_y = decoder.current_y;
 #if BSP_LCD_PANEL_AUTO
-    if (nv3049) {
-      pet_cst328_sample_t frame;
-      err = pet_cst328_read(&frame);
-      if (err == ESP_OK && !frame.fresh) {
-        // An ACK is not a finger-up. Cancel a stale stroke if the release was lost.
-        contact_ambiguous = pointer.down && monotonic_ms() - cst_last_contact_ms >= cst_release_timeout_ms;
+    if (nv3049 || g_address == PET_ST7123_ADDRESS) {
+      bool fresh = false;
+      int slot = -1, x = 0, y = 0;
+      if (nv3049) {
+        pet_cst328_sample_t frame;
+        err = pet_cst328_read(&frame);
+        if (err == ESP_OK) {
+          fresh = frame.fresh;
+          pressed = fresh && frame.count == 1 && frame.down;
+          contact_ambiguous = fresh && frame.count > 1;
+          slot = frame.id; x = frame.x; y = frame.y;
+        }
+      } else {
+        pet_st7123_frame_t frame;
+        err = pet_st7123_read(&g_st7123, &frame);
+        if (err == ESP_OK) {
+          fresh = frame.fresh;
+          pressed = fresh && frame.count == 1;
+          contact_ambiguous = fresh && frame.count > 1;
+          slot = frame.slot; x = frame.x; y = frame.y;
+        }
+      }
+      if (err == ESP_OK && !fresh) {
+        // Missing a fresh report is not a release. Cancel a stale stroke.
+        contact_ambiguous = pointer.down && monotonic_ms() - last_contact_ms >= release_timeout_ms;
         if (!contact_ambiguous) {
           atomic_fetch_add(&g_samples, 1);
           consecutive_errors = 0;
@@ -150,17 +175,17 @@ static void touch_task(void *arg) {
           continue;
         }
       }
-      if (err == ESP_OK && frame.fresh) {
-        contact_ambiguous = frame.count > 1;
-        pressed = frame.count == 1 && frame.down;
-        if (pressed) {
-          contact_ambiguous = pointer.down && track_id != frame.id;
-          track_id = frame.id;
-          cst_last_contact_ms = monotonic_ms();
-          if (!pet_p4_touch_cst328_to_ui(frame.x, frame.y, g_cst328_info.x_resolution,
+      if (pressed) {
+        contact_ambiguous = pointer.down && track_id != slot;
+        track_id = slot;
+        last_contact_ms = monotonic_ms();
+        if (nv3049) {
+          if (!pet_p4_touch_cst328_to_ui(x, y, g_cst328_info.x_resolution,
               g_cst328_info.y_resolution, &ui_x, &ui_y)) err = ESP_ERR_INVALID_RESPONSE;
-          atomic_store(&g_panel_x, frame.x); atomic_store(&g_panel_y, frame.y);
+        } else {
+          pet_p4_touch_panel_to_ui(x, y, &ui_x, &ui_y);
         }
+        atomic_store(&g_panel_x, x); atomic_store(&g_panel_y, y);
       }
     } else
 #endif
@@ -350,7 +375,27 @@ static esp_err_t configure_legacy_touch(i2c_master_bus_handle_t i2c_bus) {
 }
 
 #if BSP_LCD_PANEL_AUTO
+bool pet_p4_touch_try_st7123(void) {
+  if (g_address == PET_ST7123_ADDRESS) return true;
+  if (g_ready) return false;
+  if (bsp_i2c_init() != ESP_OK) return false;
+  i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
+  if (!bus || i2c_master_probe(bus, PET_ST7123_ADDRESS, 20) != ESP_OK) return false;
+  pet_st7123_t detected;
+  if (pet_st7123_open(bus, &detected) != ESP_OK) return false;
+  if (g_address) {
+    // Preserve the first touch selection but expose both clues to the LCD chooser.
+    i2c_master_bus_rm_device(detected.device);
+    return true;
+  }
+  g_st7123 = detected;
+  g_address = PET_ST7123_ADDRESS;
+  ESP_LOGI(TAG, "ST7102 module clue: ST7123, 480x640, slots=%u", g_st7123.slots);
+  return true;
+}
+
 bool pet_p4_touch_try_nv3049(void) {
+  if (g_address == PET_CST328_ADDRESS) return true;
   if (bsp_i2c_init() != ESP_OK) return false;
   i2c_master_bus_handle_t bus = bsp_i2c_get_handle();
   if (!bus || i2c_master_probe(bus, PET_CST328_ADDRESS, 20) != ESP_OK) return false;
@@ -364,6 +409,10 @@ bool pet_p4_touch_try_nv3049(void) {
     return false;
   }
 
+  if (g_address) {
+    pet_cst328_deinit();
+    return true;
+  }
   g_address = PET_CST328_ADDRESS;
   ESP_LOGI(TAG, "Panel NV3049F identified via CST328 chip=0x%04x project=0x%04x",
            g_cst328_info.chip_id, g_cst328_info.project_id);
@@ -377,7 +426,14 @@ __attribute__((noinline, optimize("Oz")))
 esp_err_t pet_p4_touch_init(void) {
   if (g_ready) return ESP_OK;
 #if BSP_LCD_PANEL_AUTO
-  if (g_address != PET_CST328_ADDRESS)
+  // In-cell touch may start scanning only after the ST7102 display wakes.
+  if (!g_address && pet_p4_lcd_panel_model() == PET_LCD_PANEL_ST7102) {
+    for (unsigned attempt = 0; attempt < 3; ++attempt) {
+      if (attempt) vTaskDelay(pdMS_TO_TICKS(50));
+      if (pet_p4_touch_try_st7123()) break;
+    }
+  }
+  if (g_address != PET_CST328_ADDRESS && g_address != PET_ST7123_ADDRESS)
 #endif
   {
     g_init_stage = "i2c_init";
@@ -421,8 +477,11 @@ no_memory:
   if (g_touch_io) esp_lcd_panel_io_del(g_touch_io);
   g_touch_io = NULL;
 #if BSP_LCD_PANEL_AUTO
-  pet_cst328_deinit();
-  g_address = 0;
+  // Keep the display-selected ST7123 handle for a queue/task allocation retry.
+  if (g_address != PET_ST7123_ADDRESS) {
+    pet_cst328_deinit();
+    g_address = 0;
+  }
 #endif
   g_init_error = ESP_ERR_NO_MEM;
   return g_init_error;

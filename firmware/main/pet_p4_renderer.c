@@ -4158,7 +4158,7 @@ static void draw_connection_banner_pixels(const char *label,uint16_t dot) {
   int banner_h = 32;
   int banner_w = utf8_text_width(label, -1, 1) + 48;
   if (banner_w < 200) banner_w = 200;
-  if (banner_w > 272) banner_w = 272;
+  if (banner_w > 420) banner_w = 420;
   if (banner_w & 1) banner_w += 1;
   int banner_x = PET_P4_UI_WIDTH - banner_w - 20;
   int banner_y = 18;
@@ -4175,14 +4175,22 @@ static void draw_connection_banner_pixels(const char *label,uint16_t dot) {
     true
   );
 }
-static void draw_common_connection(uint8_t banner) {
+static void draw_common_connection(uint8_t banner, const char *agent) {
+  char label[96];
+  static const struct { const char *id, *name; } names[] = {
+    {"codex","Codex"}, {"workbuddy","WorkBuddy"}, {"cursor-agent","Cursor"},
+    {"claude-code","Claude"}, {"mimocode","MiMo"}, {"deepseek-harness","DeepSeek"},
+    {"antigravity","Antigravity"}, {"devin","Devin"}, {"openclaw","OpenClaw"}
+  };
+  if (banner == PET_CONNECTION_USB || banner == PET_CONNECTION_WIFI) {
+    for (size_t i = 0; agent && i < sizeof(names)/sizeof(names[0]); ++i)
+      if (!strcmp(agent, names[i].id)) { agent = names[i].name; break; }
+    snprintf(label, sizeof(label), "%s 已连接%s%s", banner == PET_CONNECTION_USB ? "USB" : "Wi-Fi",
+      agent && *agent ? " · " : "", agent ? agent : "");
+    draw_connection_banner_pixels(label, rgb565(0, 170, 162));
+    return;
+  }
   switch (banner) {
-    case PET_CONNECTION_USB:
-      draw_connection_banner_pixels("已USB连接", rgb565(0, 170, 162));
-      break;
-    case PET_CONNECTION_WIFI:
-      draw_connection_banner_pixels("已WIFI连接", rgb565(0, 170, 162));
-      break;
     case PET_CONNECTION_OFFLINE:
       draw_connection_banner_pixels("未连接客户端", rgb565(242, 168, 45));
       break;
@@ -8050,9 +8058,9 @@ esp_err_t pet_p4_renderer_render(
   // Native media owns its status and error UI. Generic Agent/connection banners
   // must not cover playback status or break the immersive lyrics-only page.
 #if PET_P4_APP_RETAIN_LOGICAL
-  if(!dedicated_page&&!g_app_final_reused)draw_common_connection(g_app_common_plan.banner);
+  if(!dedicated_page&&!g_app_final_reused)draw_common_connection(g_app_common_plan.banner, !strcmp(page,"main") ? state->current_session_agent : NULL);
 #else
-  if (!dedicated_page) draw_common_connection(connection);
+  if (!dedicated_page) draw_common_connection(connection, !strcmp(page,"main") ? state->current_session_agent : NULL);
 #endif
   snprintf(g_last_render_page, sizeof(g_last_render_page), "%s", page);
 #if PET_P4_APP_RETAIN_LOGICAL

@@ -407,7 +407,7 @@ try {
     ['test_device_asr_settings', 'mimo', last], ['test_device_tts_settings', 'mimo', last],
   ]);
   assert.equal(await page.getByRole('button', { name: /显示密钥|隐藏密钥/ }).count(), 0);
-  assert.equal(await page.getByRole('navigation', { name: '跳至模型配置项目' }).getByText('云服务网络').count(), 0);
+  assert.equal(await page.getByRole('navigation', { name: '跳至模型配置项目' }).getByRole('button', { name: '云服务网络', exact: true }).count(), 1);
   for (const id of ['volcengine','kling','custom']) {
     const section = page.locator('.api-settings__provider').filter({ has: page.locator('#api-settings-' + id + '-key') });
     const input = section.locator('#api-settings-' + id + '-key');

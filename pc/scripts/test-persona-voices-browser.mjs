@@ -66,6 +66,22 @@ try {
     (await import("/scripts/fixtures/persona-gallery.jsx")).mount();
   });
   const dialog = page.getByRole("dialog");
+  await page.evaluate(async () => {
+    await import("/src/styles.css");
+    await import("/src/companion-theme.css");
+  });
+  for (const width of [1200, 560, 375]) {
+    await page.setViewportSize({ width, height: 720 });
+    const panels = dialog.locator(".persona-voice-modal__column");
+    const persona = await panels.first().boundingBox();
+    const voice = await panels.last().boundingBox();
+    assert.ok(width > 680 ? voice.x >= persona.x + persona.width : voice.y >= persona.y + persona.height);
+    const footer = await dialog.locator(".modal-footer").boundingBox();
+    assert.ok(footer.y + footer.height <= 720);
+    const body = dialog.locator(".modal-body");
+    assert.ok(await body.evaluate(el => el.scrollWidth <= el.clientWidth));
+  }
+  await page.setViewportSize({ width: 1100, height: 820 });
   const choices = dialog.getByRole("combobox", { name: "形象音色", exact: true });
   const manual = dialog.getByRole("textbox", { name: /形象音色 ID/ });
   const preview = dialog.getByRole("button", { name: "试听", exact: true });

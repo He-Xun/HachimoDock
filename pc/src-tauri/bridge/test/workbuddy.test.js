@@ -259,7 +259,20 @@ test("WorkBuddy explicit title reaches the shared USB and LAN session card paylo
   // The next title-less hook must not replace the existing exact-session card title.
   publish({ session_id: "session-a" });
   const titleless = JSON.parse(fs.readFileSync(path.join(localStateDir, "workbuddy.json"), "utf8"));
-  assert.equal(titleless.display.title, "WorkBuddy");
+  assert.equal(titleless.display.title, "合成会话甲");
+  const latest = () => JSON.parse(fs.readFileSync(path.join(localStateDir, "workbuddy.json"), "utf8"));
+  publish({ session_id: "session-a", hook_event_name: "UserPromptSubmit", generation_id: "one", prompt: "测试音频连接" });
+  publish({ session_id: "session-b" });
+  assert.notEqual(latest().display.content, "测试音频连接");
+  publish({ session_id: "session-a", hook_event_name: "PostToolUse", generation_id: "one" });
+  assert.equal(latest().display.content, "测试音频连接");
+  publish({ session_id: "session-a", generation_id: "two" });
+  assert.notEqual(latest().display.content, "测试音频连接");
+  publish({ session_id: "session-a", hook_event_name: "UserPromptSubmit", prompt: "第二个任务" });
+  publish({ session_id: "session-a" });
+  assert.equal(latest().display.content, "第二个任务");
+  publish({ session_id: "session-a", hook_event_name: "Stop", last_assistant_message: "已验证" });
+  assert.equal(latest().display.content, "已验证");
   const bus = createAgentSessionBus({
     port: 0, adapters: [new WorkBuddyAdapter(f.options)], log: () => {},
     sessionStatusProvider: agentId => metricsTracker.sessionStatuses(agentId),
@@ -311,4 +324,50 @@ test("WorkBuddy hook sessions enter the bus without reading private databases or
     assert.equal(events[0].code, "AGENT_INPUT_UNSUPPORTED");
     await assert.rejects(() => adapter.openNew(), /WorkBuddy/);
   } finally { await bus.stop(); }
+});
+
+test("returning from Codex restores the live WorkBuddy card including updates while away", async t => {
+  const f = fixture(t);
+  fs.mkdirSync(f.root);
+  const metrics = new SessionMetricsTracker();
+  const bus = createAgentSessionBus({
+    port: 0, adapters: [new WorkBuddyAdapter(f.options)], log: () => {},
+    sessionStatusProvider: id => metrics.sessionStatuses(id),
+  });
+  const port = await bus.start();
+  t.after(() => bus.stop());
+  const read = async route => {
+    const response = await fetch(`http://127.0.0.1:${port}/agent/${route}`, { headers: bus.authorizationHeaders("read") });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const { ensureFollowQueueRuntime, updateFollowQueue } = await import("../../../src/lib/follow-queue.js");
+  const publisher = new LocalStatePublisher({ localStateDir: path.join(f.home, "states") });
+  publisher._localSpeechDir = path.join(f.home, "speech");
+  const publish = (event, prompt) => publishClawdState({ publisher, metricsTracker: metrics }, stateForHook({
+    session_id: "round-trip", session_title: "行程讨论", hook_event_name: event, prompt,
+  }, f.options));
+  let queue = { activeAgentId: "workbuddy", enabledAgents: new Set(["codex", "workbuddy"]) };
+  const select = async id => {
+    queue = updateFollowQueue(queue, "select", id);
+    await ensureFollowQueueRuntime("select", () => read("status"), () => assert.fail("restarted live bridge"));
+    assert.equal(queue.activeAgentId, id);
+  };
+  publish("UserPromptSubmit", "先看周末行程");
+  const cards = async () => (await read("sessions?agentId=workbuddy")).sessions;
+  const [before] = await cards();
+  assert.equal(before.displayContent, "先看周末行程");
+  await select("codex");
+  publish("UserPromptSubmit", "更新周末行程");
+  await select("workbuddy");
+  const [after] = await cards();
+  assert.equal(after.id, before.id);
+  const { p4SessionDisplayTitle } = await import("../../../src/lib/p4-session-service.js");
+  assert.equal(p4SessionDisplayTitle(after), "行程讨论");
+  assert.equal(after.displayContent, "更新周末行程");
+  assert.equal(after.state, "working");
+  await select("codex");
+  publish("Stop");
+  await select("workbuddy");
+  assert.equal((await cards())[0].state, "done");
 });

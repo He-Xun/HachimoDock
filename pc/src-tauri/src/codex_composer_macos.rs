@@ -156,6 +156,59 @@ pub(super) fn activate_agent(agent: MacosAgent) {
     }
 }
 
+// Query the window server on the voice worker. AppKit foreground notifications
+// are run-loop driven and can still describe the previous app on this thread.
+fn foreground_process_id() -> Option<i32> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct ProcessSerialNumber { high: u32, low: u32 }
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn GetFrontProcess(process: *mut ProcessSerialNumber) -> i16;
+        fn GetProcessPID(process: *const ProcessSerialNumber, pid: *mut i32) -> i32;
+    }
+    let mut process = ProcessSerialNumber::default();
+    let mut pid = 0;
+    let found = unsafe { GetFrontProcess(&mut process) == 0 && GetProcessPID(&process, &mut pid) == 0 };
+    (found && pid > 0).then_some(pid)
+}
+
+fn foreground_pid_is(pid: i32) -> bool {
+    foreground_process_id() == Some(pid)
+}
+
+/// A device press has no AppKit activation event. Wait on the same running
+/// process while the receiver buffers this utterance, then let Begin pin the
+/// actual conversation window and editor before it admits any text.
+pub(super) fn wake_for_device_voice(agent: MacosAgent, current: impl Fn() -> bool) -> bool {
+    for bundle in agent_bundle_identifiers(agent) {
+        let apps = NSRunningApplication::runningApplicationsWithBundleIdentifier(
+            &NSString::from_str(bundle));
+        let mut live = apps.iter().filter(|app| !app.isTerminated());
+        let Some(app) = live.next() else { continue };
+        if live.next().is_some() || !current() { return false; }
+        let pid = app.processIdentifier();
+        if pid <= 0 { return false; }
+        let ax = AXUIElement::application(pid);
+        let _ = ax.set_messaging_timeout(0.4);
+        if app.isHidden() { let _ = app.unhide(); }
+        #[allow(deprecated)]
+        let _ = app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+        if current() && unsafe { AXIsProcessTrusted() } {
+            let _ = ax.set_frontmost(CFBoolean::true_value());
+            if let Ok(window) = ax.main_window() { let _ = window.raise(); }
+        }
+        let deadline = Instant::now() + AGENT_FRONTMOST_TIMEOUT;
+        while current() && !app.isTerminated() {
+            if foreground_pid_is(pid) { return true; }
+            if Instant::now() >= deadline { break; }
+            thread::sleep(ACCESSIBILITY_TREE_RETRY_DELAY);
+        }
+        return false;
+    }
+    false
+}
+
 pub(super) fn agent_is_frontmost(agent: MacosAgent) -> bool {
     for bundle_identifier in agent_bundle_identifiers(agent) {
         let applications = NSRunningApplication::runningApplicationsWithBundleIdentifier(
@@ -163,14 +216,14 @@ pub(super) fn agent_is_frontmost(agent: MacosAgent) -> bool {
         );
         if applications
             .iter()
-            .any(|application| application.isActive())
+            .any(|application| foreground_pid_is(application.processIdentifier()))
         {
             return true;
         }
     }
     agent_application_pids(agent).into_iter().any(|pid| {
         NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
-            .is_some_and(|application| application.isActive())
+            .is_some_and(|application| foreground_pid_is(application.processIdentifier()))
     })
 }
 
@@ -3410,7 +3463,7 @@ fn prepare_existing_workbuddy_for_voice_begin(agent: MacosAgent) -> Result<(), S
         if application.isHidden() && !application.unhide() {
             return Err("WorkBuddy 现有应用无法取消隐藏，未创建新窗口".into());
         }
-        if !application.isActive() {
+        if !foreground_pid_is(pid) {
             let requested=application.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
             // An explicit device voice press has no AppKit key event. Activate
             // the exact existing AX application too, before asking for windows.
@@ -3422,7 +3475,7 @@ fn prepare_existing_workbuddy_for_voice_begin(agent: MacosAgent) -> Result<(), S
         let deadline = Instant::now() + AGENT_FRONTMOST_TIMEOUT;
         loop {
             still_same()?;
-            if application.isActive() { return Ok(()); }
+            if foreground_pid_is(pid) { return Ok(()); }
             if Instant::now() >= deadline {
                 return Err("WorkBuddy 现有应用尚未确认激活，未重新打开应用".into());
             }
@@ -3440,7 +3493,7 @@ fn prepare_existing_workbuddy_for_voice_begin(agent: MacosAgent) -> Result<(), S
         let deadline = ready_started + AGENT_FRONTMOST_TIMEOUT;
         loop {
             still_same()?;
-            if !application.isActive() {
+            if !foreground_pid_is(pid) {
                 return Err("WorkBuddy 准备期间前台已变化，未继续唤起".into());
             }
             let foreground = ax_element_attribute(&AXUIElement::system_wide(), "AXFocusedApplication");
@@ -3455,7 +3508,7 @@ fn prepare_existing_workbuddy_for_voice_begin(agent: MacosAgent) -> Result<(), S
             let (window_count,window_read_ok)=match app.windows() {
                 Ok(windows)=>(windows.iter().count(),true),Err(_)=>(0,false),
             };
-            let ready=workbuddy_voice_wake::windows_ready(pid,application.isActive(),focused_pid,window_count);
+            let ready=workbuddy_voice_wake::windows_ready(pid,foreground_pid_is(pid),focused_pid,window_count);
             if ready || Instant::now() >= deadline {
                 crate::realtime_chat_log::record("", "workbuddy_wake",serde_json::json!({
                     "stage":"window_readiness","ok":ready,"elapsedMs":ready_started.elapsed().as_millis(),
@@ -3535,14 +3588,14 @@ fn recover_window_after_failed_voice_begin(agent: MacosAgent) -> Option<String> 
     let mut live = applications.iter().filter(|app| !app.isTerminated());
     let application = live.next()?;
     let pid = application.processIdentifier();
-    if live.next().is_some() || pid <= 0 || !application.isActive() {
+    if live.next().is_some() || pid <= 0 || !foreground_pid_is(pid) {
         return None;
     }
     let path = application.bundleURL()?.path()?.to_string();
     let ax = AXUIElement::application(pid);
     let _ = ax.set_messaging_timeout(1.5);
     if !matches!(ax.windows(), Ok(windows) if windows.iter().next().is_none())
-        || application.isTerminated() || !application.isActive()
+        || application.isTerminated() || !foreground_pid_is(pid)
     {
         return None;
     }
@@ -5105,6 +5158,21 @@ mod tests {
         assert!(again.window == target.window);
         // No focus, text write, keypress, submit, or editor contents in output.
         println!("standard_window=1 enabled_composer=1 stable=true writes=0 sends=0");
+    }
+
+    #[test]
+    #[ignore = "Requires an authorized Mac and a background WorkBuddy conversation; focuses the editor without writing"]
+    fn background_workbuddy_first_voice_press_prepares_editor() {
+        assert!(unsafe { AXIsProcessTrusted() }, "test process needs Accessibility access");
+        let agent = MacosAgent::WorkBuddy;
+        assert!(!agent_is_frontmost(agent), "WorkBuddy must start in the background");
+        let original = foreground_process_id().and_then(|pid| NSRunningApplication::runningApplicationWithProcessIdentifier(pid));
+        let result = wake_for_device_voice(agent, || true).then(|| begin_current_voice(agent));
+        if let Some(app) = original {
+            let _ = app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+        }
+        let state = result.expect("target must reach foreground").expect("first press should pin the editor");
+        assert!(state.current_visible_target.is_some());
     }
 
     #[test]

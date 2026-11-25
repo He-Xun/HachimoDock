@@ -1,7 +1,8 @@
 // Isolated UI contract test. Synthetic works never touch the public service.
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
-const base = "http://127.0.0.1:4177";
+const base = process.env.PET_TEST_URL || "http://127.0.0.1:4177";
+assert.equal(new URL(base).hostname, "127.0.0.1");
 const browser = await chromium.launch({ headless:true, executablePath:process.env.PET_TEST_CHROMIUM || "/Applications/360Chrome.app/Contents/MacOS/360Chrome" });
 try {
   const page=await browser.newPage({viewport:{width:1360,height:1000}});
@@ -63,6 +64,9 @@ try {
   });
   // Community browsing now lives in the embedded site, covered by test-community-web.mjs.
   await page.getByRole('tab', {name:'我的组件', exact:true}).waitFor();
+  const toolbar = page.locator('.community-toolbar');
+  assert.equal(await toolbar.getByRole('button', {name:'发布作品'}).count(), 1);
+  assert.equal(await toolbar.getByRole('tablist').getByRole('button', {name:'发布作品'}).count(), 0);
   await page.getByText('原有本地组件与按键配置保留').waitFor();
   await page.getByRole('tab', {name:'我的创作', exact:true}).click();
   await page.getByRole('heading', {name:/作品 1 ·/}).first().waitFor();

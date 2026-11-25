@@ -80,6 +80,8 @@ function isNewTurnStartSignal(payload) {
 function shouldPreserveTerminalState(payload, incomingState, previousState) {
   if (!TERMINAL_TURN_STATES.has(previousState)) return false;
   if (TERMINAL_TURN_STATES.has(incomingState)) return false;
+  // Devin reports authoritative cloud snapshots, including resumed sessions.
+  if (payload.source === "devin" && payload.event === "CloudStatus") return false;
   return !isNewTurnStartSignal(payload);
 }
 
@@ -136,7 +138,7 @@ class SessionMetricsTracker {
     this.workbuddyTurns = new Map();
   }
 
-  apply(payload, nowMs = Date.now()) {
+  apply(payload, nowMs = Date.now(), workbuddyContent = false) {
     if (!payload || typeof payload !== "object") return payload;
 
     const source = normalizeLower(payload.source) || "unknown";
@@ -147,7 +149,7 @@ class SessionMetricsTracker {
     const record = this._getOrCreateRecord(
       key,
       nowMs,
-      scope === "source" ? null : sourceFallbackKey
+      scope === "source" || source === "workbuddy" ? null : sourceFallbackKey
     );
     if (source === "deepseek-harness") {
       record.dshLifecycle = {
@@ -163,6 +165,25 @@ class SessionMetricsTracker {
       previousState
     );
     const state = preserveTerminalState ? previousState : incomingState;
+    if (source === "workbuddy" && scope.startsWith("session:") && payload.display && !preserveTerminalState) {
+      const turnId = payload.taskCorrelation?.turnId || "";
+      const progress = ["PreToolUse", "PostToolUse", "PreCompact"].includes(payload.event);
+      if (payload.sessionTitleExplicit && payload.display.title !== "WorkBuddy") {
+        record.workbuddyTitle = payload.display.title;
+      }
+      if (payload.event === "UserPromptSubmit") {
+        record.workbuddyPrompt = workbuddyContent ? { turnId, content: payload.display.content } : null;
+      } else if (["Stop", "StopFailure", "SessionStart", "SessionEnd"].includes(payload.event)
+          || (turnId && record.workbuddyPrompt?.turnId && turnId !== record.workbuddyPrompt.turnId)) {
+        record.workbuddyPrompt = null;
+      }
+      const prompt = record.workbuddyPrompt;
+      payload = { ...payload, display: { ...payload.display,
+        title: record.workbuddyTitle || payload.display.title,
+        content: progress && !workbuddyContent && prompt && turnId === prompt.turnId
+          ? prompt.content : payload.display.content,
+      } };
+    }
     const display = payload.display && typeof payload.display === "object" ? payload.display : null;
     const displayTitle = typeof display?.title === "string" ? display.title.trim() : "";
     const displayContent = typeof display?.content === "string" ? display.content.trim() : "";

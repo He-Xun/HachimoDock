@@ -3654,7 +3654,20 @@ function Get-WorkBuddyTarget([string[]]$allowedValues, [string]$agent = 'workbud
   if ($windows.Count -ne 1) { throw '请保留唯一目标 Agent 主窗口并打开目标对话，再重新开始语音输入' }
   $process = $windows[0]
   $handle = [IntPtr]$process.MainWindowHandle
-  if (-not [CodexVoiceNative]::ActivateWindow($handle)) { throw '无法激活 WorkBuddy 目标窗口' }
+  if (-not [CodexVoiceNative]::ActivateWindow($handle)) {
+    # Window restoration is asynchronous. Request activation only once, then
+    # observe the original HWND and PID before admitting this utterance.
+    $activationDeadline = (Get-MonotonicMilliseconds) + 1500
+    do {
+      $process.Refresh()
+      if ($process.HasExited -or [IntPtr]$process.MainWindowHandle -ne $handle) {
+        throw '目标 Agent 主窗口已变化，已停止本段语音输入'
+      }
+      if ([CodexVoiceNative]::IsForeground($handle)) { break }
+      Start-Sleep -Milliseconds 50
+    } while ((Get-MonotonicMilliseconds) -lt $activationDeadline)
+    if (-not [CodexVoiceNative]::IsForeground($handle)) { throw '无法激活目标 Agent 窗口' }
+  }
   # Same activation settling as Codex/Claude. Refresh roots on each attempt;
   # a valid main HWND does not mean Chromium has populated its editable tree.
   Start-Sleep -Milliseconds 120
@@ -4887,7 +4900,7 @@ impl CodexComposerBridge {
     }
 
     /// Bring the target agent forward before device dictation writes into it.
-    pub fn activate_agent(agent_id: &str) -> bool {
+    pub fn wake_for_device_voice(agent_id: &str, current: impl Fn() -> bool) -> bool {
         let agent = match agent_id.trim() {
             "codex" => macos::MacosAgent::Codex,
             "claude-code" => macos::MacosAgent::Claude,
@@ -4896,8 +4909,7 @@ impl CodexComposerBridge {
             "antigravity" => macos::MacosAgent::Antigravity,
             _ => return false,
         };
-        macos::activate_agent(agent);
-        true
+        macos::wake_for_device_voice(agent, current)
     }
 
     pub fn accessibility_permission_granted() -> bool {

@@ -116,7 +116,7 @@ function nextSessionFeedState(state, action, routingSessions, authoritativeSnaps
       visibleRoutingSessions,
       previousQueue,
       action.nowMs,
-      { authoritativeSnapshot },
+      { authoritativeSnapshot, restoreRecentTerminal: agentId === "workbuddy" },
     )
     : [];
   const fingerprint = JSON.stringify([sessions, routingSessions]);

@@ -11,7 +11,7 @@ try {
   page.setDefaultTimeout(7000);
   const errors=[];
   page.on("pageerror",e=>{errors.push(e.message);console.error(e.message);});
-  await page.route("**/__keyboard-test",r=>r.fulfill({contentType:"text/html",body:'<div id="root"></div>'}));
+  await page.route("**/__keyboard-test",r=>r.fulfill({contentType:"text/html",body:'<!doctype html><div id="root" class="app-shell"></div>'}));
   await page.goto(base+"/__keyboard-test");
   await page.evaluate(async()=>{
     const refresh=(await import("/@react-refresh")).default;
@@ -20,6 +20,8 @@ try {
     window.__vite_plugin_react_preamble_installed__=true;
     const React=(await import("/node_modules/.vite/deps/react.js")).default;
     const {default:dom}=await import("/node_modules/.vite/deps/react-dom_client.js");
+    await import("/src/styles.css");
+    await import("/src/companion-theme.css");
     const {default:Keyboard}=await import("/src/dashboard/KeyboardConfiguration.jsx");
     const root=dom.createRoot(document.querySelector("#root"));
     window.usbTest={connected:true,boardDeviceId:"usb-target",connectionId:"7",bootId:"a".repeat(16),
@@ -92,6 +94,14 @@ try {
   await page.getByText("快捷键已保存。",{exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(()=>calls.filter(c=>c.slot!=null).map(c=>[c.cmd,c.boardDeviceId,c.connectionId,c.chord])),
     [["usb_bluetooth_keyboard_config","usb-target","7",4]]);
+  // A 1000px window at 125% scaling has about 800 CSS pixels available.
+  await page.setViewportSize({width:800, height:720});
+  const clear = page.getByRole("button",{name:"清除快捷键"});
+  const [saveBox, clearBox] = await Promise.all([set.boundingBox(), clear.boundingBox()]);
+  assert.ok(saveBox && clearBox && Math.abs(saveBox.y - clearBox.y) < 2, "save and clear share one row");
+  assert.ok(clearBox.x + clearBox.width <= 800, "keyboard actions stay inside the viewport");
+  assert.equal(await set.evaluate(node => node.scrollWidth <= node.clientWidth + 1), true);
+  await page.setViewportSize({width:1280,height:720});
   console.log("USB exact slot confirmed");
   await page.getByRole("button",{name:"录入组合键"}).click();
   await page.keyboard.down("b"); await page.keyboard.down("Control"); await page.keyboard.up("b"); await page.keyboard.up("Control");
@@ -155,10 +165,10 @@ try {
     assert.equal(await edit.inputValue(),"20");
     const toggle=page.getByRole("switch",{name:"蓝牙模式"});
     await page.evaluate(()=>window.interleave="mode");
-    await toggle.click();
+    await toggle.locator("..").click();
     await page.getByRole("switch",{checked:true}).waitFor();
     await page.getByRole("alert").filter({hasText:"键盘设置已变化"}).waitFor();
-    await toggle.click();
+    await toggle.locator("..").click();
     await page.getByRole("switch",{checked:false}).waitFor();
     // A bridge/firmware that returns only a snapshot must not count as an ACK.
     await edit.selectOption("14");

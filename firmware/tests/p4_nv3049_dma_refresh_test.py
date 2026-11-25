@@ -122,7 +122,7 @@ def test_draw_recovery_never_writes_a_possible_dma_front(tmp_path):
     from p4_h264_prefetch_test import compile_run
 
     lcd = (ROOT / 'main/pet_p4_lcd.c').read_text()
-    state = lcd[lcd.index('static enum { NV_READY'):lcd.index('static ppa_client_handle_t')]
+    state = lcd[lcd.index('static enum { NV_READY'):lcd.index('static esp_err_t nv_wait_for_refresh')]
     functions = '\n'.join(function(lcd, name) for name in (
         'lcd_refresh_done_callback', 'nv_refresh_done_callback', 'nv_wait_for_refresh',
         'nv_publish', 'nv_recover', 'lcd_draw_core'))
@@ -147,11 +147,10 @@ typedef void *esp_lcd_panel_handle_t, *SemaphoreHandle_t;
 typedef void esp_lcd_dpi_panel_event_data_t;
 static uint8_t fb[2][12], *g_nv_buffers[2] = {fb[0], fb[1]};
 static void *g_panel_handle = fb, *g_refresh_done_sem = &fb[1];
-static unsigned g_nv_front, g_nv_last_refresh_tick, tick, refresh_at, writes, submits, reveals;
-static unsigned conversions;
+static unsigned g_nv_front, tick, refresh_at, writes, submits, reveals;
 static unsigned selected, scanning, caller = 1, core, g_nv_render_task = 1;
+static uint32_t g_nv_last_refresh_tick;
 static atomic_uint g_nv_refresh, g_nv_max_refresh_gap;
-static atomic_bool g_nv_ppa_active;
 static bool g_backlight_revealed, token, drop_give, fail_submit, publish_on_failure, irq_in_submit;
 static int xPortGetCoreID(void) { return core; }
 static unsigned xTaskGetCurrentTaskHandle(void) { return caller; }
@@ -166,7 +165,15 @@ static void latch(void) {
   scanning = selected;
   nv_refresh_done_callback(g_panel_handle, NULL, g_refresh_done_sem);
 }
+static int publish_lock;
+static void *g_nv_publish_lock = &publish_lock;
+static bool g_nv_paused_for_flash;
+static void xSemaphoreGive(void *sem) {
+  assert(sem == g_nv_publish_lock && publish_lock);
+  publish_lock = 0;
+}
 static int xSemaphoreTake(void *sem, unsigned ticks) {
+  if (sem == g_nv_publish_lock) { assert(!publish_lock); publish_lock = 1; return 1; }
   assert(sem == g_refresh_done_sem);
   if (!token) {
     tick += ticks;
@@ -176,17 +183,13 @@ static int xSemaphoreTake(void *sem, unsigned ticks) {
   token = false;
   return result;
 }
-static void nv_init_conversion(void) { assert(scanning == 0); conversions++; }
 static int pet_p4_lcd_panel_model(void) { return PET_LCD_PANEL_NV3049; }
-static int nv_convert_ppa(const uint16_t *p, unsigned w, unsigned h, uint8_t *out) {
-  (void)p; (void)w; (void)h; (void)out; assert(0); return 1;
-}
 static bool pet_nv3049_blit_rgb565(uint8_t *out, int x, int y, int w, int h, const uint16_t *p) {
   assert(out != fb[scanning]);
   writes++;
   for (int j = 0; j < h; j++)
     for (int i = 0; i < w; i++)
-      memset(out + ((y+j)*2+x+i)*3, *p++, 3);
+      memset(out + (3 - ((y+j)*2+x+i))*3, *p++, 3);
   return true;
 }
 static int esp_lcd_panel_draw_bitmap(void *panel, int x, int y, int w, int h, const void *buf) {
@@ -202,6 +205,9 @@ static int pet_p4_lcd_reveal(void) { reveals++; g_backlight_revealed = true; ret
 static uint16_t pixels[4] = {1,2,3,4};
 static int draw(void) { return lcd_draw_core(0,0,2,2,pixels,NULL); }
 int main(void) {
+  g_nv_paused_for_flash = true;
+  assert(nv_publish(1) == ESP_ERR_INVALID_STATE && !submits && !publish_lock);
+  g_nv_paused_for_flash = false;
   // Even a real latch inside submit predates the recorded fence. Its token
   // cannot authorize reuse. Repeated draws during the outage do no work.
   atomic_store(&g_nv_refresh, UINT_MAX-1);
@@ -242,17 +248,18 @@ int main(void) {
     refresh_at = tick + 250;
     uint16_t patch = 99;
     assert(lcd_draw_core(1,1,1,1,&patch,NULL) == ESP_OK);
-    assert(writes == before+1 && !memcmp(fb[scanning], frozen[front], 9));
-    assert(fb[scanning][9] == 99 && scanning == (front ^ 1));
+    assert(writes == before+1 && !memcmp(fb[scanning] + 3, frozen[front] + 3, 9));
+    assert(fb[scanning][0] == 99 && scanning == (front ^ 1));
   }
   assert(reveals == 1 && g_nv_recoveries == 3);
-  // Boot's initial-fence timeout defers even the PPA self-test, which writes fb1.
+  // A delayed initial latch prevents any pixel writes until DMA confirms fb0.
   selected = scanning = g_nv_published_front = 0;
   g_nv_published_at = atomic_load(&g_nv_refresh);
-  g_nv_state = NV_FIRST_LATCH;
-  assert(draw() == ESP_ERR_TIMEOUT && !conversions);
+  g_nv_state = NV_WAIT_LATCH;
+  unsigned before = writes;
+  assert(draw() == ESP_ERR_TIMEOUT && writes == before);
   latch(); refresh_at = tick + 250;
-  assert(draw() == ESP_OK && conversions == 1 && g_nv_front == 1);
+  assert(draw() == ESP_OK && writes == before + 1 && g_nv_front == 1);
   return 0;
 }
 ''', 'nv-recovery')

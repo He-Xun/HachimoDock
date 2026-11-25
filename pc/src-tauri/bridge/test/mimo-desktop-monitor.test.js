@@ -72,5 +72,20 @@ test("Desktop follows turn metadata and leaves CLI and completed history to thei
   assert.ok(queriesAtCompletion >= 3);
   await delay(1200);
   assert.equal(lifecycleQueries, queriesAtCompletion);
+  const second = Date.now();
+  insert.run("next", "desktop", "active", null, "next-input", second, second);
+  await waitForState("working");
+  message.run("second-answer", second, JSON.stringify({ role: "assistant", parentID: "next-input" }));
+  part.run("second-answer", JSON.stringify({ type: "text", text: "second private reply" }));
+  writer.prepare("UPDATE inbox SET state='settled', outcome='success' WHERE id='next'").run();
+  await waitForState("speaking");
+  await waitForState("done");
+  const { SessionMetricsTracker } = require("../packages/clawd-backend-service/src/status-metrics");
+  const tracker = new SessionMetricsTracker();
+  const displayed = states.map(row => tracker.apply({
+    source: row.agent_id, sessionId: row.session_id, state: row.state, event: row.event,
+  }).state);
+  assert.deepEqual(displayed, ["working", "speaking", "done", "working", "speaking", "done"]);
+  assert.doesNotMatch(JSON.stringify(states), /private|next-input/);
   monitor.stop();
 });

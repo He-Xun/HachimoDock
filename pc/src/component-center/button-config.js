@@ -135,7 +135,7 @@ const GLOBAL_EXIT_CONTROL_LABELS = {
 };
 
 export const DEVICE_BUTTON_CONFIG_STORAGE_KEY = "pet-manager.board-voice-config";
-export const DEVICE_BUTTON_CONFIG_MODEL_VERSION = 9;
+export const DEVICE_BUTTON_CONFIG_MODEL_VERSION = 10;
 
 export function resolveGlobalButtonEvents(response = {}, action = "page_back") {
   const boardConfig = response?.config && typeof response.config === "object"
@@ -193,7 +193,12 @@ export function migrateP4V7ShippedBoardDefaults(response = {}, runtime = "") {
     .every(([event, action]) => actionsByEvent.get(event) === action);
   if (!matchesShippedV7Defaults) return { response, migrated: false };
 
+  const navigation = {
+    "knob.rotate_cw": "nav_right", "knob.rotate_ccw": "nav_left",
+    "joystick.up": "session_previous", "joystick.down": "session_next",
+  };
   const migratedBindings = bindings.map((binding) => {
+    if (navigation[binding.event]) return { ...binding, action: navigation[binding.event], value: "" };
     if (binding?.event === "button.sw1.short_press") {
       return { ...binding, action: "page_enter", value: "" };
     }

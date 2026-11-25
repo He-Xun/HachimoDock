@@ -120,7 +120,9 @@ function mapCodexStateToStatus(state, event, completedWork) {
 
 function normalizeAgentId(value) {
   if (typeof value !== "string" || !value.trim()) return "claude-code";
-  return normalizeTopicPart(value.trim().toLowerCase(), "claude-code");
+  const normalized = normalizeTopicPart(value.trim().toLowerCase(), "claude-code");
+  if (normalized === "cursor" || normalized === "cursor-agent") return "cursor-agent";
+  return normalized;
 }
 
 function mapClawdStateToStatus(state, event) {
@@ -567,10 +569,10 @@ function mapGatewayEvent(event, payload) {
   return null;
 }
 
-function enrichPayloadMetrics(metricsTracker, payload) {
+function enrichPayloadMetrics(metricsTracker, payload, workbuddyContent) {
   if (!metricsTracker || !payload || typeof payload !== "object") return payload;
   const nowMs = Number.isFinite(payload.tsMs) ? payload.tsMs : Date.now();
-  return metricsTracker.apply(payload, nowMs);
+  return metricsTracker.apply(payload, nowMs, workbuddyContent);
 }
 
 class LocalStatePublisher {
@@ -619,7 +621,8 @@ class LocalStatePublisher {
 
   publishSpeech(sourceId, payload, { sourceOnly = false } = {}) {
     const source = normalizeAgentId(sourceId || payload?.source || "unknown");
-    if (this.selectedSource && source !== this.selectedSource) return;
+    if (this.enabledSources.size ? !this.enabledSources.has(source)
+      : this.selectedSource && source !== this.selectedSource) return;
     const speechPayload = {
       source,
       ...(payload && typeof payload === "object" ? payload : {}),
@@ -1667,6 +1670,8 @@ function publishClawdState(config, payload) {
   const tokenUsage = extractTokenUsageFromPayload(payload);
   const display = source === "claude-code"
     ? buildClaudeHookDisplay(payload, status, event)
+    : source === "cursor-agent"
+      ? buildCursorHookDisplay(payload, status, event)
     : source === "mimocode"
       ? buildMiMoCodeHookDisplay(payload, status, event)
       : source === "workbuddy"
@@ -1716,8 +1721,29 @@ function publishClawdState(config, payload) {
     ...(config.includeRaw ? { raw: payload } : {}),
   };
 
-  const enriched = enrichPayloadMetrics(config.metricsTracker, out);
+  const workbuddyContent = source === "workbuddy"
+    && Boolean(require("../../../hooks/workbuddy-display").displayText(payload.display_content));
+  const enriched = enrichPayloadMetrics(config.metricsTracker, out, workbuddyContent);
   config.publisher.publishSource(enriched);
+}
+
+function buildCursorHookDisplay(payload, status, event) {
+  const cwd = typeof payload?.cwd === "string" ? payload.cwd : "";
+  const folder = cwd ? path.basename(cwd) : "";
+  const title = compactHookText(payload?.session_title, 120) || (folder ? `Cursor · ${folder}` : "Cursor");
+  const toolName = compactHookText(payload?.tool_name, 80);
+  let content = "";
+  if (event === "UserPromptSubmit") content = "正在思考";
+  else if (event === "PreToolUse" || event === "PostToolUse") content = toolName ? `正在执行 ${toolName}` : "正在执行任务";
+  else if (event === "Stop") content = "已完成";
+  else if (event === "StopFailure") content = "执行失败";
+  else if (event === "PostToolUseFailure") content = "工具执行失败，继续处理";
+  else if (status === "working") content = "正在处理";
+  else if (status === "done") content = "已完成";
+  else if (status === "error") content = "执行失败";
+  else if (status === "idle" || status === "sleeping") content = "等待任务";
+  if (!title && !content) return undefined;
+  return { title: compactHookText(title, 120), content, status, event, updatedAtMs: Date.now() };
 }
 
 function buildWorkBuddyHookDisplay(payload, status, event) {
@@ -1782,6 +1808,7 @@ function syncHooks(port, autoStart, options = {}) {
       port,
       autoStart: Boolean(autoStart),
       syncLegacyHooks: options.syncLegacyHooks !== false,
+      syncCursor: options.syncCursor === true,
       syncMiMoCode: options.syncMiMoCode === true,
       syncWorkBuddy: options.syncWorkBuddy === true,
     },
@@ -1792,6 +1819,20 @@ function syncHooks(port, autoStart, options = {}) {
   });
   worker.unref();
   return worker;
+}
+
+function shouldPublishHookState(config, agentId) {
+  // Claude hook sync stays off unless Claude is enabled. Cursor still reports
+  // through the same hook endpoint, and that working state has to reach the
+  // device even when no other hook-based agent is selected.
+  const normalized = normalizeAgentId(agentId);
+  return Boolean(
+    config?.http?.syncHooks
+    || config?.mimocode?.enabled
+    || config?.workbuddy?.enabled
+    || normalized === "devin"
+    || normalized === "cursor-agent"
+  );
 }
 
 function isAgentBusyState(state) {
@@ -2111,8 +2152,9 @@ function startClaudeLogMonitor(config) {
 }
 
 function antigravityMonitorEnabled(env = process.env) {
-  return env.CLAWD_SELECTED_AGENT_ID === "antigravity"
-    && env.CLAWD_ENABLE_ANTIGRAVITY_MONITOR === "true";
+  const enabled = (env.CLAWD_ENABLED_AGENTS || "").split(",").map(id => id.trim()).filter(Boolean);
+  return env.CLAWD_ENABLE_ANTIGRAVITY_MONITOR === "true"
+    && (enabled.length ? enabled.includes("antigravity") : env.CLAWD_SELECTED_AGENT_ID === "antigravity");
 }
 
 function publishAntigravityState(publisher, sessionId, state, event, extra, tsMs = Date.now()) {
@@ -2353,8 +2395,7 @@ async function main() {
     strictPort: config.http.strictPort,
     publisher,
     onState: (payload) => {
-      if (config.http.syncHooks || config.mimocode.enabled || config.workbuddy.enabled
-          || normalizeAgentId(payload.agent_id) === "devin") {
+      if (shouldPublishHookState(config, payload.agent_id)) {
         publishClawdState({
           publisher,
           metricsTracker,
@@ -2378,6 +2419,9 @@ async function main() {
         error.code = "AGENT_BUS_UNAVAILABLE";
         error.statusCode = 503;
         throw error;
+      }
+      if (!payload?.agentId && !config.http.mockButtonDefaultAgentId && publisher.enabledSources.size > 1) {
+        throw Object.assign(new Error("请选择目标 Agent。"), { statusCode: 400 });
       }
       const resolved = resolveMockButtonInjectRequest(payload, {
         defaultAgentId:
@@ -2434,9 +2478,12 @@ async function main() {
     mockButtonInjectPath: "http://127.0.0.1:" + port + "/mock-button-inject",
   });
 
-  if (config.http.syncHooks || config.mimocode.enabled || config.workbuddy.enabled) {
+  const syncCursor = [config.localPublisher.selectedSource, ...config.localPublisher.enabledSources]
+    .some((source) => normalizeAgentId(source) === "cursor-agent");
+  if (config.http.syncHooks || config.mimocode.enabled || config.workbuddy.enabled || syncCursor) {
     syncHooks(port, config.http.autoStartHook, {
       syncLegacyHooks: config.http.syncHooks,
+      syncCursor,
       syncMiMoCode: config.mimocode.enabled,
       syncWorkBuddy: config.workbuddy.enabled,
     });
@@ -2538,6 +2585,7 @@ async function main() {
       MiMoCodeAdapter,
       WorkBuddyAdapter,
       DshAdapter,
+      CursorAgentAdapter,
     } = busModule;
     const busLog = (level, message, details) => log(level, `bus :: ${message}`, details);
     const adapters = [
@@ -2547,6 +2595,7 @@ async function main() {
       new MiMoCodeAdapter({ log: busLog }),
       new WorkBuddyAdapter({ log: busLog }),
       new DshAdapter({ log: busLog }),
+      new CursorAgentAdapter({ log: busLog }),
     ];
     agentBus = createAgentSessionBus({
       capability,
@@ -2658,6 +2707,7 @@ module.exports = {
   buildMiMoCodeHookDisplay,
   buildWorkBuddyHookDisplay,
   publishClawdState,
+  shouldPublishHookState,
   publishPermissionRequest,
   OpenClawStatusController,
   resolvePermissionDecision,

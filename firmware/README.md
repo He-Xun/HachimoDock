@@ -15,14 +15,14 @@
 | PSRAM | 32 MB 封装内堆叠内存 |
 | Flash | 32 MB QSPI NOR Flash |
 | 显示屏 | 480 × 640 ST7701S MIPI 屏幕；固件使用 640 × 480 横向逻辑画布，再旋转输出 |
-| 输入 | SW1 / SW2 / SW3、摇杆；触控支持 GT911 与按芯片 ID 识别的 FT6336U / CST826，是否可用以实机 `touchReady` 为准 |
+| 输入 | SW1 / SW2 / SW3、摇杆；触控支持 GT911 及按芯片 ID 识别的 FT6336U / CST826 / CST328，是否可用以实机 `touchReady` 为准 |
 | USB | Type-C，可通过板上切换电路连接 CH343 USB-UART 或 ESP32-P4 原生 USB HS OTG |
 
 板型、引脚与分区配置以 [boards/](boards/)、[sdkconfig.defaults](sdkconfig.defaults) 和 [partitions.csv](partitions.csv) 为准。不同硬件版本烧录前需核对配置。
 
 ESP32-P4-WIFI6-M 的 M 表示焊接排针，不代表芯片版本。v1 与 v3 使用不同固件镜像，同一种芯片的镜像由 Windows/macOS 共用；v3 的构建与实机验收要求见 [BUILD.md](BUILD.md)。
 
-Wi‑Fi 6 和 Pico 的 v1/v3 固件均支持 ST7701S 和 NV3049F，见 [屏幕配置](BUILD.md#st7701s-与-nv3049f-屏幕配置)。
+Wi‑Fi 6 和 Pico 的 v1/v3 固件均支持 ST7701S 和 NV3049F。空板烧录通用包后，可通过显示排线识别已验证的 NV3049F 模组 ID（30 49 03）。6 针触摸排线可选；USB 屏型选项 `nv3049` 同时适用于带触摸与无触摸的新屏。见 [屏幕配置](BUILD.md#st7701s-与-nv3049f-屏幕配置)。
 
 ## 已支持的功能
 

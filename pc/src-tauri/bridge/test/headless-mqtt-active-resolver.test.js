@@ -139,6 +139,45 @@ test("Claude hook-only sessions keep their first inferred navigation title", () 
   assert.equal(session.displayTitle, "后续追问");
 });
 
+test("Cursor tool failure does not freeze later work in the same turn", () => {
+  const tracker = new SessionMetricsTracker();
+  const now = Date.now();
+  const base = {
+    source: "cursor-agent",
+    sessionId: "cursor-session",
+    sessionTitle: "Cursor · HachimoDock",
+  };
+  const { resolveStateAndEvent } = require("../hooks/cursor-hook");
+  const failedTool = resolveStateAndEvent({}, "postToolUseFailure");
+  assert.equal(failedTool.state, "working");
+  tracker.apply({ ...base, ...failedTool }, now);
+  const resumed = tracker.apply({
+    ...base,
+    event: "PostToolUse",
+    state: "working",
+    display: { title: "Cursor · HachimoDock", content: "正在执行 Read" },
+  }, now + 10);
+
+  assert.equal(resumed.state, "working");
+  assert.equal(resumed.display.content, "正在执行 Read");
+  const [session] = tracker.sessionStatuses("cursor-agent", now + 10);
+  assert.equal(session.state, "working");
+  assert.equal(session.displayContent, "正在执行 Read");
+  const stopped = resolveStateAndEvent({ status: "error" }, "stop");
+  assert.equal(tracker.apply({ ...base, ...stopped }, now + 20).state, "error");
+  assert.equal(tracker.apply({ ...base, ...failedTool }, now + 30).state, "error");
+});
+
+test("Devin resumes completed cloud sessions and preserves genuine approval requests", () => {
+  const tracker = new SessionMetricsTracker();
+  const base = { source: "devin", sessionId: "one", event: "CloudStatus" };
+  let now = Date.now();
+  for (const state of ["working", "done", "working", "waiting_user", "done"]) {
+    assert.equal(tracker.apply({ ...base, state }, ++now).state, state);
+  }
+  assert.equal(tracker.apply({ ...base, event: "PostToolUse", state: "working" }, ++now).state, "done");
+});
+
 test("Claude terminal state ignores delayed trailing lifecycle events until a new prompt", () => {
   const tracker = new SessionMetricsTracker();
   const now = Date.now();
@@ -299,7 +338,7 @@ test("LocalStatePublisher reports first enabled source as preferred source", () 
   assert.equal(emptyPublisher.getPreferredSource(), "");
 });
 
-test("LocalStatePublisher writes speech only for the selected source", () => {
+test("LocalStatePublisher keeps separate speech snapshots for every followed source", () => {
   const localStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "pet-manager-speech-test-"));
   const publisher = new LocalStatePublisher({
     enabledSources: ["codex", "claude-code"],
@@ -315,7 +354,10 @@ test("LocalStatePublisher writes speech only for the selected source", () => {
   const speech = JSON.parse(fs.readFileSync(path.join(localStateDir, "claude-code.json"), "utf8"));
   assert.equal(speech.source, "claude-code");
   assert.equal(speech.displayContent, "claude done");
-  assert.equal(fs.existsSync(path.join(localStateDir, "codex.json")), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(localStateDir, "codex.json"))).displayContent, "codex done");
+  publisher.publishSpeech("workbuddy", { displayContent: "not followed" });
+  assert.equal(fs.existsSync(path.join(localStateDir, "workbuddy.json")), false);
+  fs.rmSync(localStateDir, { recursive: true, force: true });
 });
 
 test("resolveMockButtonInjectRequest applies defaults for mock button path", () => {

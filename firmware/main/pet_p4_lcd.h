@@ -18,14 +18,23 @@ typedef enum {
   PET_LCD_PANEL_UNKNOWN,
   PET_LCD_PANEL_ST7701,
   PET_LCD_PANEL_NV3049,
+  PET_LCD_PANEL_ST7102,
 } pet_lcd_panel_model_t;
 
 pet_lcd_panel_model_t pet_p4_lcd_panel_model(void);
 #if BSP_LCD_PANEL_AUTO
+typedef enum {
+  PET_LCD_PROFILE_AUTO = 0,
+  PET_LCD_PROFILE_NV3049 = 1,
+  PET_LCD_PROFILE_ST7102 = 2,
+} pet_lcd_profile_t;
+pet_lcd_profile_t pet_p4_lcd_configured_profile(void);
+const char *pet_p4_lcd_selection(void);
+const char *pet_p4_lcd_panel_name(void);
+esp_err_t pet_p4_lcd_sleep_for_flash(void);
 bool pet_p4_lcd_no_touch_profile(void);
-bool pet_p4_lcd_nv3049_ppa_active(void);
 unsigned pet_p4_lcd_nv3049_max_refresh_gap(void);
-esp_err_t pet_p4_lcd_save_no_touch_profile(bool enabled);
+esp_err_t pet_p4_lcd_save_profile(pet_lcd_profile_t profile);
 #endif
 esp_err_t pet_p4_lcd_prepare_boot(void);
 esp_err_t pet_p4_lcd_init(void);

@@ -1,41 +1,37 @@
 /**
  * [Input] title/subtitle/actions/children props plus an opt-in Collapsible with summary.
- * [Output] Unified section card replacing panel-card / component-store-section / component-tool-card; Collapsible powers the device dashboard's "voice assistant" section.
+ * [Output] Unified section card. The frame is RegionCard: a label above a gray functional surface.
  * [Pos] component node in pc/src/shell
  * [Sync] If this file changes, update `pc/src/shell/.folder.md`.
  */
 
 import React, { useState } from "react";
 import { ChevronDown } from "lucide-react";
+import RegionCard from "./RegionCard.jsx";
 
 export default function Card({ id, title, subtitle, actions, children }) {
-  const showHeader = title || subtitle || actions;
   return (
-    <section className="card" id={id} tabIndex={id ? -1 : undefined}>
-      {showHeader && (
-        <header className="card__header">
-          <div className="card__title-block">
-            {title && <h2 className="card__title">{title}</h2>}
-            {subtitle && <p className="card__subtitle">{subtitle}</p>}
-          </div>
-          {actions && <div className="card__actions">{actions}</div>}
-        </header>
-      )}
-      <div className="card__body">{children}</div>
-    </section>
+    <RegionCard id={id} title={title} subtitle={subtitle} actions={actions} tabIndex={id ? -1 : undefined}>
+      {children}
+    </RegionCard>
   );
 }
 
-function CardCollapsible({ title, summary, defaultOpen = false, children }) {
-  const [open, setOpen] = useState(defaultOpen);
+function CardCollapsible({ title, summary, defaultOpen = false, open: controlledOpen, onOpenChange, children }) {
+  const [localOpen, setLocalOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? localOpen;
+  function toggle() {
+    if (controlledOpen === undefined) setLocalOpen(!open);
+    onOpenChange?.(!open);
+  }
   return (
     <section
-      className={open ? "card card--collapsible is-open" : "card card--collapsible"}
+      className={open ? "card card--collapsible region-card is-open" : "card card--collapsible region-card"}
     >
       <button
         type="button"
-        data-card-surface="" className="card__header card__header--toggle"
-        onClick={() => setOpen((prev) => !prev)}
+        data-card-surface="" className="card__header card__header--toggle region-card__header"
+        onClick={toggle}
         aria-expanded={open}
       >
         <div className="card__title-block">
@@ -48,7 +44,13 @@ function CardCollapsible({ title, summary, defaultOpen = false, children }) {
           aria-hidden="true"
         />
       </button>
-      {open && <div className="card__body">{children}</div>}
+      <div
+        className="card__body region-card__body"
+        inert={open ? undefined : ""}
+        aria-hidden={open ? undefined : true}
+      >
+        <div className="card__collapse">{children}</div>
+      </div>
     </section>
   );
 }

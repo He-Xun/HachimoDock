@@ -190,10 +190,8 @@ impl Context {
         self
     }
     pub fn with_followed_agent(self)->Self {
-        // Share the device's existing follow resolver, including its selected
-        // Agent fallback when no specific session is pinned. Never use the
-        // returned session ID as the destination of a visible-editor dispatch.
-        let (agent, _) = crate::resolve_usb_inject_target(&self.board);
+        // The selected profile is shared by wired and wireless conversations.
+        let agent = crate::resolve_usb_inject_agent_id();
         self.with_agent_selection(&agent)
     }
     fn with_agent_selection(mut self, agent: &str)->Self {
@@ -545,9 +543,9 @@ async fn execute_inner(ctx: &Context, input: Value, untrusted: bool) -> Result<V
         }.into());
     }
     let input: Request = serde_json::from_value(normalized_arguments(&input)).map_err(|_| "桌面 Agent 参数无效")?;
-    let mut selected=ctx.clone();
-    if let Some(agent)=input.agent {selected.agent=agent;selected.followed_agent=None;}
-    let ctx=&selected;
+    if input.agent.is_some_and(|agent| agent.id() != ctx.default_agent()) {
+        return Err("目标与当前跟随的 Agent 不一致，请先切换 Agent。".into());
+    }
     if input.operation == "capabilities" {
         return Ok(capabilities());
     }
@@ -563,7 +561,7 @@ async fn execute_inner(ctx: &Context, input: Value, untrusted: bool) -> Result<V
             .tasks
             .iter_mut()
             .rev()
-            .find(|t| t.board == ctx.board && input.task_id.as_ref().map_or(t.agent==ctx.agent,|id| id==&t.id && input.agent.is_none_or(|a|a==t.agent)))
+            .find(|t| t.board == ctx.board && t.agent == ctx.agent && input.task_id.as_ref().is_none_or(|id| id == &t.id))
             .ok_or("本设备还没有派发过这项任务")?;
         if input.operation == "cancel" {
             if untrusted {

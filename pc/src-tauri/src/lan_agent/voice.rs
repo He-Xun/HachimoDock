@@ -13,11 +13,13 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use tauri::Emitter;
 use zeroize::Zeroizing;
 
 const CONTROL_MODE: u8 = 20;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const STATUS_INTERVAL: Duration = Duration::from_secs(5);
+const SELECTION_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_CAPTURE: Duration = Duration::from_secs(31);
 const MAX_FRAMES: u64 = 1500;
 
@@ -25,6 +27,10 @@ const MAX_FRAMES: u64 = 1500;
 pub(crate) struct Route {
     target: AudioTarget,
     usb: UsbSerialManager,
+    // Capability is probed again while the route lives: a single timeout must
+    // not permanently disable the pressed-card check.
+    session_selection: Arc<AtomicBool>,
+    navigation_poll: bool,
     valid: Arc<AtomicBool>,
 }
 
@@ -76,7 +82,13 @@ struct Capture {
     utterance_id: String,
 }
 
-fn capture(app: &tauri::AppHandle, route: &Route, token: u32) -> Option<Capture> {
+fn capture(
+    app: &tauri::AppHandle,
+    route: &Route,
+    token: u32,
+    pressed: Option<super::LocalSelection>,
+) -> Option<Capture> {
+    let _peer = load_peer().filter(|peer| route.target.matches_peer(Some(peer)))?;
     let (mut stream, key) = route.target.open_voice(token).ok()?;
     if !route.is_current() {
         return None;
@@ -96,9 +108,14 @@ fn capture(app: &tauri::AppHandle, route: &Route, token: u32) -> Option<Capture>
     }
     let board = route.target.board_id();
     let boot = route.target.boot_id();
+    let target = super::voice_target(board, boot);
+    if pressed.as_ref().is_some_and(|p| !target.as_ref().is_some_and(|t|
+        t.agent_id == p.agent_id && (queue_empty || t.session_id == p.session_id))) {
+        return None;
+    }
     let utterance_id = uuid::Uuid::new_v4().to_string();
     start_device_voice_context(app, board, &utterance_id, &utterance_id, "", boot,
-        queue_empty, Some(route.clone()), None);
+        queue_empty, Some(route.clone()), None, target);
     let context = active_device_voice_context().lock().ok()
         .and_then(|current| current.as_ref().filter(|context| context.utterance_id == utterance_id).cloned())?;
 
@@ -137,7 +154,13 @@ fn probe(peer: &Peer, usb: &UsbSerialManager) -> Option<Route> {
     if !status.wireless_voice_input || usb.status().connected {
         return None;
     }
+    // Selector 5 answering proves the device supports pending-card selection.
+    // A transient miss stays retryable instead of disabling the check for the
+    // lifetime of this route.
+    let selection = status.control_trusted.then(|| super::read_local_selection(peer, &status.boot_id, 5).ok()).flatten();
     Some(Route {
+        navigation_poll: selection.as_ref().is_some_and(|s| s.navigation_poll),
+        session_selection: Arc::new(AtomicBool::new(selection.is_some())),
         target: AudioTarget::from_status(peer.clone(), status, "").ok()?,
         usb: usb.clone(),
         valid: Arc::new(AtomicBool::new(true)),
@@ -148,8 +171,11 @@ pub(super) fn start(app: tauri::AppHandle, usb: UsbSerialManager) {
     thread::spawn(move || {
         let mut route: Option<Route> = None;
         let mut completed: Option<Capture> = None;
+        let mut last_navigation = 0;
         let mut last_offer = 0;
         let mut next_probe = Instant::now();
+        let mut next_selection_check = Instant::now();
+        let mut next_selection_retry = Instant::now();
         loop {
             thread::sleep(POLL_INTERVAL);
             let Some(peer) = load_peer().filter(|_| !usb.status().connected) else {
@@ -157,6 +183,7 @@ pub(super) fn start(app: tauri::AppHandle, usb: UsbSerialManager) {
                     old.retire();
                 }
                 next_probe = Instant::now();
+                next_selection_check = Instant::now();
                 continue;
             };
             if route.as_ref().is_some_and(|route| !route.target.matches_peer(Some(&peer))) {
@@ -164,26 +191,77 @@ pub(super) fn start(app: tauri::AppHandle, usb: UsbSerialManager) {
                     old.retire();
                 }
                 next_probe = Instant::now();
+                next_selection_check = Instant::now();
             }
             if route.is_none() && Instant::now() >= next_probe {
                 route = probe(&peer, &usb);
                 next_probe = Instant::now() + STATUS_INTERVAL;
+                next_selection_check = Instant::now() + STATUS_INTERVAL;
                 completed = None;
                 last_offer = 0;
+                last_navigation = 0;
             }
             let Some(current) = route.as_ref() else { continue };
-            let controls = exchange_response(
-                &peer, CONTROL_MODE, current.target.boot_id().as_bytes(), Some(8),
-            ).ok().and_then(|reply| decode_controls(&reply));
+            let mut request = current.target.boot_id().as_bytes().to_vec();
+            if current.navigation_poll { request.push(1); }
+            let length = if current.navigation_poll { 12 } else { 8 };
+            let controls = exchange_response(&peer, CONTROL_MODE, &request, Some(length)).ok()
+                .filter(|reply| reply.len() == length).and_then(|reply| {
+                    if current.navigation_poll {
+                        let sequence = u32::from_be_bytes(reply[8..12].try_into().ok()?);
+                        if sequence != 0 && sequence != last_navigation && current.active_link() {
+                            last_navigation = sequence;
+                            let _ = app.emit("lan-navigation-changed", current.target.board_id());
+                        }
+                    }
+                    decode_controls(&reply[..8])
+                });
             let Some(controls) = controls.filter(|_| current.active_link()) else {
                 current.retire();
                 route = None;
                 next_probe = Instant::now() + POLL_INTERVAL;
+                next_selection_check = Instant::now();
                 continue;
             };
-            if controls.hold != 0 && controls.hold != last_offer {
-                last_offer = controls.hold;
-                completed = capture(&app, current, controls.hold);
+            if controls.hold == 0 {
+                next_selection_retry = Instant::now();
+            }
+            if !current.session_selection.load(Ordering::Acquire)
+                && Instant::now() >= next_selection_check
+            {
+                if super::read_local_selection(&peer, current.target.boot_id(), 5).is_ok() {
+                    current.session_selection.store(true, Ordering::Release);
+                }
+                next_selection_check = Instant::now() + STATUS_INTERVAL;
+            }
+            if controls.hold != 0 && controls.hold != last_offer
+                && Instant::now() >= next_selection_retry
+            {
+                let mut start = true;
+                let mut pressed = None;
+                if current.session_selection.load(Ordering::Acquire) {
+                    match super::read_local_selection(&peer, current.target.boot_id(), 5) {
+                        Ok(selection) if selection.sequence == controls.hold => {
+                            pressed = Some(selection);
+                        }
+                        Ok(_) => {
+                            // The device already moved past this hold; consume
+                            // the token instead of retrying it forever.
+                            last_offer = controls.hold;
+                            start = false;
+                        }
+                        Err(_) => {
+                            // Transient selector failure: keep last_offer so the
+                            // same hold retries instead of being dropped.
+                            start = false;
+                            next_selection_retry = Instant::now() + SELECTION_RETRY_INTERVAL;
+                        }
+                    }
+                }
+                if start {
+                    last_offer = controls.hold;
+                    completed = capture(&app, current, controls.hold, pressed);
+                }
             }
             if completed.as_ref().is_some_and(|capture| capture.token == controls.confirm) {
                 let Some(capture) = completed.take() else { continue };

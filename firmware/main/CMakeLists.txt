@@ -4,7 +4,7 @@
 # [Sync] If this file changes, update `firmware/.folder.md` and `protocol.md`.
 
 if("$ENV{PET_P4_LCD_PANEL_AUTO}" STREQUAL "1")
-  set(panel_touch_source "pet_p4_cst328.c")
+  set(panel_touch_source "pet_p4_cst328.c" "pet_p4_touch_st7123.c")
 endif()
 
 if("$ENV{PET_P4_SYSTEM_WIFI}" STREQUAL "1")

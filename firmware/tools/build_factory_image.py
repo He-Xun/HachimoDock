@@ -905,6 +905,9 @@ def validate_segments(segments: list[tuple[int, Path]], flash_size: int) -> None
         )
 
 
+FACTORY_DISPLAY_PROFILE = "nv3049"
+
+
 def generate_factory_nvs(
     directory: Path, generator: Path, board: str | None, device_id: str | None,
     size: int, display_profile: str | None,
@@ -914,10 +917,10 @@ def generate_factory_nvs(
         if board not in ("pico", "wifi6") or not re.fullmatch(r"p4-[a-f0-9]{12}", device_id or ""):
             raise ValueError("factory identity requires a verified board model and P4 device ID")
         rows.extend(["pet_factory,namespace,,", f"board_v1,data,string,{device_id}:{board}"])
-    if display_profile:
-        if display_profile != "nv3049-no-touch":
+    if display_profile is not None:
+        if display_profile != FACTORY_DISPLAY_PROFILE:
             raise ValueError("unknown factory display profile")
-        rows.extend(["pet_lcd,namespace,,", "nv3049_no_tp,data,u8,1"])
+        rows.extend(["pet_lcd,namespace,,", "profile,data,u8,1"])
     if len(rows) == 1:
         raise ValueError("no factory settings requested")
     record = directory / "factory.csv"
@@ -956,6 +959,11 @@ def build_factory_image(
     factory_nvs: Path | None = None,
     display_profile: str | None = None,
 ) -> dict:
+    if display_profile is not None:
+        if display_profile != FACTORY_DISPLAY_PROFILE:
+            raise ValueError("unknown factory display profile")
+        if factory_nvs is None:
+            raise ValueError("factory display profile requires provisioned NVS")
     layout = validate_factory_partition_layout(project_dir, build_dir)
     if (spiffs_offset != CURRENT_DATA_LAYOUT["storage"][0]
             or spiffs_image.stat().st_size != CURRENT_DATA_LAYOUT["storage"][1]
@@ -970,8 +978,8 @@ def build_factory_image(
     flash_size = parse_flash_size(str(settings["flash_size"]))
     segments.append((spiffs_offset, spiffs_image.resolve()))
     segments.append((raw_appearance_offset, raw_appearance_image.resolve()))
+    nvs = layout["partitions"]["nvs"]
     if factory_nvs is not None:
-        nvs = layout["partitions"]["nvs"]
         if factory_nvs.stat().st_size != nvs["bytes"]:
             raise ValueError("factory settings NVS image has the wrong size")
         segments.append((parse_int(nvs["offset"]), factory_nvs.resolve()))
@@ -1000,9 +1008,12 @@ def build_factory_image(
 
     if factory_revision_range(output.read_bytes()) != chip_bounds:
         raise ValueError("merged factory image has inconsistent chip revision bounds")
-    if factory_nvs is not None:
-        if sha256_region(output, parse_int(nvs["offset"]), nvs["bytes"]) != sha256_file(factory_nvs):
-            raise ValueError("merged factory image does not contain the expected factory settings")
+    expected_nvs = (
+        sha256_file(factory_nvs) if factory_nvs is not None
+        else hashlib.sha256(b"\xff" * nvs["bytes"]).hexdigest()
+    )
+    if sha256_region(output, parse_int(nvs["offset"]), nvs["bytes"]) != expected_nvs:
+        raise ValueError("merged factory image does not contain the expected factory settings")
 
     if sha256_region(output, spiffs_offset, spiffs_image.stat().st_size) != sha256_file(
         spiffs_image
@@ -1102,8 +1113,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--verified-board-model", choices=("pico", "wifi6"))
     parser.add_argument("--verified-device-id", help="P4 device ID recorded during physical board inspection")
     parser.add_argument("--nvs-generator", type=Path, help="ESP-IDF nvs_partition_gen.py")
-    parser.add_argument("--display-profile", choices=("nv3049-no-touch",),
-                        help="Set only for a physically identified touchless NV3049F screen")
+    parser.add_argument("--display-profile", choices=(FACTORY_DISPLAY_PROFILE,),
+                        help="Provision a known NV3049F independently of the touch connector")
     args = parser.parse_args(argv)
     if bool(args.verified_board_model) != bool(args.verified_device_id):
         parser.error("board identity requires both the verified board model and device ID")

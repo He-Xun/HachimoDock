@@ -13,6 +13,7 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_err.h"
+#include "esp_system.h"
 #include "esp_log.h"
 #include "esp_check.h"
 #include "esp_spiffs.h"
@@ -23,6 +24,7 @@
 #include "usb/usb_host.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #include "esp_lcd_st7701.h"
+#include "st7102.h"
 #include "hal/mipi_dsi_host_ll.h"
 #include "bsp/esp32_p4_wifi6_touch_lcd_4_3.h"
 #include "bsp/display.h"
@@ -49,7 +51,8 @@ static esp_err_t nv3049_init_controller(esp_lcd_panel_io_handle_t io)
     vTaskDelay(pdMS_TO_TICKS(20));
     ESP_RETURN_ON_ERROR(gpio_set_level(BSP_LCD_RST, 1), TAG, "NV3049 reset release");
     vTaskDelay(pdMS_TO_TICKS(120));
-    // A powered NV3049F can remain asleep across a host reset. Start the clock before Sleep Out.
+    // The adapter keeps the controller powered across a P4 reset. Bring up
+    // its clock before waking the retained panel and programming the scanout.
     mipi_dsi_host_ll_set_clock_lane_state(MIPI_DSI_LL_GET_HOST(0), MIPI_DSI_LL_CLOCK_LANE_STATE_HS);
     vTaskDelay(pdMS_TO_TICKS(30));
     ESP_RETURN_ON_ERROR(esp_lcd_panel_io_tx_param(io, 0x11, NULL, 0), TAG, "Wake NV3049 before configuration");
@@ -536,6 +539,7 @@ static esp_err_t bsp_enable_dsi_phy_power(void)
 #if BSP_MIPI_DSI_PHY_PWR_LDO_CHAN > 0
     // Turn on the power for MIPI DSI PHY, so it can go from "No Power" state to "Shutdown" state
     static esp_ldo_channel_handle_t phy_pwr_chan = NULL;
+    if (phy_pwr_chan) return ESP_OK;
     esp_ldo_channel_config_t ldo_cfg = {
         .chan_id = BSP_MIPI_DSI_PHY_PWR_LDO_CHAN,
         .voltage_mv = BSP_MIPI_DSI_PHY_PWR_LDO_VOLTAGE_MV,
@@ -545,6 +549,173 @@ static esp_err_t bsp_enable_dsi_phy_power(void)
 #endif // BSP_MIPI_DSI_PHY_PWR_LDO_CHAN > 0
 
     return ESP_OK;
+}
+
+#if BSP_LCD_PANEL_AUTO
+#include "esp_rom_sys.h"
+#include <stdio.h>
+
+// The older adapter can have a write-only DSI link. The SDK read API waits
+// indefinitely for its reply. Bound each FIFO wait and discard the probe bus
+// before configuring either panel.
+static int read_display_register(dsi_host_dev_t *host, uint8_t reg, unsigned bytes)
+{
+    for (unsigned i = 0; i < 64 && !mipi_dsi_host_ll_gen_is_read_fifo_empty(host); ++i) {
+        (void)mipi_dsi_host_ll_gen_read_payload_fifo(host);
+    }
+    if (!mipi_dsi_host_ll_gen_is_read_fifo_empty(host) || mipi_dsi_host_ll_gen_is_cmd_fifo_full(host)) return -1;
+    mipi_dsi_host_ll_gen_set_packet_header(host, 0, MIPI_DSI_DT_SET_MAXIMUM_RETURN_PKT, 0, bytes);
+    if (mipi_dsi_host_ll_gen_is_cmd_fifo_full(host)) return -1;
+    mipi_dsi_host_ll_gen_set_packet_header(host, 0, MIPI_DSI_DT_DCS_READ_0, 0, reg);
+    for (unsigned i = 0; i < 1500; ++i) {
+        if (!mipi_dsi_host_ll_gen_is_read_fifo_empty(host)) {
+            uint32_t word = mipi_dsi_host_ll_gen_read_payload_fifo(host);
+            return word & (bytes == 3 ? 0xffffff : 0xff);
+        }
+        esp_rom_delay_us(20);
+    }
+    return -1;
+}
+
+esp_err_t bsp_nv3049_sleep_for_flash(esp_lcd_panel_io_handle_t io, bool keep_command_mode)
+{
+    dsi_host_dev_t *host = MIPI_DSI_LL_GET_HOST(0);
+    const uint32_t mode = host->mode_cfg.val;
+    const uint32_t packet = host->pckhdl_cfg.val;
+    const uint32_t channel = host->gen_vcid.val;
+    // A running video panel gets its normal scan timing during display-off
+    // and sleep-in. The cold initializer has no active video stream yet.
+    if (!keep_command_mode) mipi_dsi_host_ll_enable_video_mode(host, false);
+    mipi_dsi_host_ll_enable_bta(host, true);
+    mipi_dsi_host_ll_gen_set_rx_vcid(host, 0);
+    esp_err_t err = ESP_ERR_TIMEOUT;
+    if (mipi_dsi_host_ll_gen_is_cmd_fifo_full(host)) goto done;
+    err = esp_lcd_panel_io_tx_param(io, 0x28, NULL, 0);
+    if (err != ESP_OK) goto done;
+    vTaskDelay(pdMS_TO_TICKS(50));
+    err = ESP_ERR_TIMEOUT;
+    if (mipi_dsi_host_ll_gen_is_cmd_fifo_full(host)) goto done;
+    err = esp_lcd_panel_io_tx_param(io, 0x10, NULL, 0);
+    if (err != ESP_OK) goto done;
+    vTaskDelay(pdMS_TO_TICKS(250));
+    if (keep_command_mode) {
+        if (!mipi_dsi_host_ll_gen_is_cmd_fifo_empty(host)) {
+            err = ESP_ERR_TIMEOUT;
+            goto done;
+        }
+        mipi_dsi_host_ll_enable_video_mode(host, false);
+    }
+    err = ESP_ERR_INVALID_RESPONSE;
+    if (read_display_register(host, 0x0a, 1) != 0x08) goto done;
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (read_display_register(host, 0x0a, 1) == 0x08) err = ESP_OK;
+done:
+    host->gen_vcid.val = channel;
+    host->pckhdl_cfg.val = packet;
+    if (!keep_command_mode || err != ESP_OK) host->mode_cfg.val = mode;
+    return err;
+}
+
+static bool matches_nv3049_id(const int individual[3])
+{
+    return individual[0] == 0x30 && individual[1] == 0x49 && individual[2] == 0x03;
+}
+
+static int read_id_register(dsi_host_dev_t *host, uint8_t reg, unsigned bytes)
+{
+    // A timed-out transaction can still be in flight. Allow it to finish so
+    // the FIFO drain in read_display_register cannot pick up its late reply.
+    for (unsigned i = 0; i < 1500; ++i) {
+        if (!mipi_dsi_host_ll_gen_is_read_cmd_busy(host) &&
+            mipi_dsi_host_ll_gen_is_cmd_fifo_empty(host)) {
+            return read_display_register(host, reg, bytes);
+        }
+        esp_rom_delay_us(20);
+    }
+    return -1;
+}
+
+static void format_id_byte(char text[3], int value)
+{
+    if (value < 0) {
+        snprintf(text, 3, "--");
+    } else {
+        snprintf(text, 3, "%02X", (unsigned)value & 0xff);
+    }
+}
+
+static bsp_display_id_t probe_display_registers(dsi_host_dev_t *host)
+{
+    for (unsigned attempt = 1; attempt <= 2; ++attempt) {
+        if (attempt == 2) vTaskDelay(pdMS_TO_TICKS(30));
+        const int rdid = read_id_register(host, 0x04, 3);
+        if (rdid < 0) {
+            ESP_LOGW(TAG, "DCS ID attempt %u 04 unavailable", attempt);
+            continue;
+        }
+        if (rdid == 0 || rdid == 0xffffff) {
+            ESP_LOGW(TAG, "DCS ID attempt %u 04=[%s] reserved", attempt,
+                     rdid == 0 ? "00 00 00" : "FF FF FF");
+            return BSP_DISPLAY_ID_UNKNOWN;
+        }
+        int individual[3];
+        bool consistent = true;
+        char combined_hex[3][3], individual_hex[3][3];
+        for (unsigned i = 0; i < 3; ++i) {
+            individual[i] = read_id_register(host, 0xda + i, 1);
+            const int byte = (rdid >> (8 * i)) & 0xff;
+            if (individual[i] != byte) consistent = false;
+            format_id_byte(combined_hex[i], byte);
+            format_id_byte(individual_hex[i], individual[i]);
+        }
+        // Production firmware uses WARN as its maximum log level. Print RDID
+        // in wire order, with "--" for an unavailable register response.
+        ESP_LOGW(TAG, "DCS ID attempt %u 04=[%s %s %s] DA=%s DB=%s DC=%s consistent=%s",
+                 attempt, combined_hex[0], combined_hex[1], combined_hex[2],
+                 individual_hex[0], individual_hex[1], individual_hex[2],
+                 consistent ? "yes" : "no");
+        if (consistent) {
+            // W280BF055I-20Z V0.2B, verified through both ID read paths.
+            if (individual[0] == 0x80 && individual[1] == 0xa0 && individual[2] == 0xfb) {
+                return BSP_DISPLAY_ID_ST7102;
+            }
+            return matches_nv3049_id(individual) ? BSP_DISPLAY_ID_NV3049 : BSP_DISPLAY_ID_UNKNOWN;
+        }
+    }
+    return BSP_DISPLAY_ID_UNKNOWN;
+}
+
+bool bsp_probe_nv3049_display(void)
+{
+    return bsp_probe_display_id() == BSP_DISPLAY_ID_NV3049;
+}
+#endif
+
+bsp_display_id_t bsp_probe_display_id(void)
+{
+#if BSP_LCD_PANEL_AUTO
+    esp_lcd_dsi_bus_handle_t bus = NULL;
+    const esp_lcd_dsi_bus_config_t config = {
+        .bus_id = 0, .num_data_lanes = BSP_LCD_NV3049_LANES,
+        .phy_clk_src = 0, .lane_bit_rate_mbps = BSP_LCD_NV3049_LANE_MBPS,
+    };
+    if (bsp_enable_dsi_phy_power() != ESP_OK) return BSP_DISPLAY_ID_UNKNOWN;
+    vTaskDelay(pdMS_TO_TICKS(20));
+    if (esp_lcd_new_dsi_bus(&config, &bus) != ESP_OK) return BSP_DISPLAY_ID_UNKNOWN;
+    dsi_host_dev_t *host = MIPI_DSI_LL_GET_HOST(0);
+    mipi_dsi_host_ll_enable_cmd_ack(host, false);
+    mipi_dsi_host_ll_set_clock_lane_state(host, MIPI_DSI_LL_CLOCK_LANE_STATE_HS);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    mipi_dsi_host_ll_set_dcs_short_rd_speed_mode(host, 0, MIPI_DSI_LL_TRANS_SPEED_LP);
+    mipi_dsi_host_ll_set_mrps_speed_mode(host, MIPI_DSI_LL_TRANS_SPEED_LP);
+    mipi_dsi_host_ll_enable_bta(host, true);
+    mipi_dsi_host_ll_gen_set_rx_vcid(host, 0);
+    bsp_display_id_t id = probe_display_registers(host);
+    esp_lcd_del_dsi_bus(bus);
+    return id;
+#else
+    return BSP_DISPLAY_ID_UNKNOWN;
+#endif
 }
 
 esp_err_t bsp_display_new(const bsp_display_config_t *config, esp_lcd_panel_handle_t *ret_panel, esp_lcd_panel_io_handle_t *ret_io)
@@ -562,6 +733,9 @@ esp_err_t bsp_display_new(const bsp_display_config_t *config, esp_lcd_panel_hand
 esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config, bsp_lcd_handles_t *ret_handles)
 {
     esp_err_t ret = ESP_OK;
+
+    const bool st7102 = config && config->st7102;
+    if (st7102 && config->nv3049) return ESP_ERR_INVALID_ARG;
 
     ESP_RETURN_ON_ERROR(bsp_display_brightness_init(), TAG, "Brightness init failed");
     ESP_RETURN_ON_ERROR(bsp_enable_dsi_phy_power(), TAG, "DSI PHY power failed");
@@ -586,6 +760,10 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config, bsp_l
         bus_config.lane_bit_rate_mbps = BSP_LCD_NV3049_LANE_MBPS;
     }
 #endif
+    if (st7102) {
+        bus_config.num_data_lanes = BSP_LCD_ST7102_LANES;
+        bus_config.lane_bit_rate_mbps = BSP_LCD_ST7102_LANE_MBPS;
+    }
     ESP_RETURN_ON_ERROR(esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus), TAG, "New DSI bus init failed");
 
     ESP_LOGI(TAG, "Install MIPI DSI LCD control panel");
@@ -622,6 +800,22 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config, bsp_l
         .flags.use_dma2d = true,
     };
 
+    if (st7102) {
+        dpi_config.dpi_clock_freq_mhz = BSP_LCD_ST7102_CLOCK_MHZ;
+        dpi_config.pixel_format = LCD_COLOR_PIXEL_FORMAT_RGB565;
+        dpi_config.num_fbs = 1;
+        dpi_config.video_timing.hsync_back_porch = 40;
+        dpi_config.video_timing.hsync_pulse_width = 2;
+        dpi_config.video_timing.hsync_front_porch = 40;
+        dpi_config.video_timing.vsync_back_porch = 9;
+        dpi_config.video_timing.vsync_pulse_width = 2;
+        dpi_config.video_timing.vsync_front_porch = 180;
+        ESP_GOTO_ON_ERROR(bsp_new_st7102_panel(mipi_dsi_bus, io, &dpi_config, &panel_handle),
+                          err, TAG, "Create ST7102 DPI panel");
+        ESP_GOTO_ON_ERROR(esp_lcd_panel_reset(panel_handle), err, TAG, "Reset ST7102");
+        ESP_GOTO_ON_ERROR(esp_lcd_panel_init(panel_handle), err, TAG, "Initialize ST7102");
+        ESP_GOTO_ON_ERROR(esp_lcd_panel_disp_on_off(panel_handle, true), err, TAG, "Enable ST7102");
+    } else
 #if BSP_LCD_PANEL_AUTO
     if (nv3049) {
         dpi_config.dpi_clock_freq_mhz = BSP_LCD_NV3049_CLOCK_MHZ;
@@ -634,6 +828,14 @@ esp_err_t bsp_display_new_with_handles(const bsp_display_config_t *config, bsp_l
         dpi_config.video_timing.vsync_back_porch = 14;
         dpi_config.video_timing.vsync_pulse_width = 2;
         dpi_config.video_timing.vsync_front_porch = 16;
+        if (esp_reset_reason() == ESP_RST_POWERON) {
+            // A cold panel can answer DCS without scanning pixels. Establish the
+            // same configured sleep state used before a protected flash, then
+            // run the normal wake sequence before enabling video.
+            ESP_GOTO_ON_ERROR(nv3049_init_controller(io), err, TAG, "Prepare cold NV3049");
+            esp_err_t sleep_err = bsp_nv3049_sleep_for_flash(io, false);
+            if (sleep_err != ESP_OK) ESP_LOGW(TAG, "Cold NV3049 sleep unconfirmed: %s", esp_err_to_name(sleep_err));
+        }
         ESP_GOTO_ON_ERROR(nv3049_init_controller(io), err, TAG, "Initialize NV3049 controller");
         ESP_GOTO_ON_ERROR(esp_lcd_new_panel_dpi(mipi_dsi_bus, &dpi_config, &panel_handle),
                           err, TAG, "Create NV3049 DPI panel");

@@ -11,7 +11,9 @@ const HOOK_TO_STATE = {
   beforeSubmitPrompt: { state: "working", event: "UserPromptSubmit" },
   preToolUse: { state: "working", event: "PreToolUse" },
   postToolUse: { state: "working", event: "PostToolUse" },
-  postToolUseFailure: { state: "error", event: "PostToolUseFailure" },
+  // A failed tool does not end the Cursor turn. Keep the device on the
+  // working state so a later tool or thought can still update it.
+  postToolUseFailure: { state: "working", event: "PostToolUseFailure" },
   subagentStart: { state: "juggling", event: "SubagentStart" },
   subagentStop: { state: "working", event: "SubagentStop" },
   preCompact: { state: "sweeping", event: "PreCompact" },
@@ -85,6 +87,12 @@ function runWithPayload(payload) {
 
   const body = { state, session_id: sessionId, event };
   body.agent_id = "cursor-agent";
+  if (payload && typeof payload.tool_name === "string" && payload.tool_name.trim()) {
+    body.tool_name = payload.tool_name.slice(0, 80);
+  }
+  if (payload && typeof payload.conversation_title === "string" && payload.conversation_title.trim()) {
+    body.session_title = payload.conversation_title.slice(0, 160);
+  }
   const hint = displaySvgFromToolHook(hookNameResolved, payload);
   if (hint !== undefined) body.display_svg = hint;
   if (cwd) body.cwd = cwd;
@@ -118,17 +126,21 @@ function finishOnce(payload) {
   runWithPayload(payload || {});
 }
 
-const chunks = [];
-process.stdin.on("data", (c) => chunks.push(c));
-process.stdin.on("end", () => {
-  let payload = {};
-  try {
-    const raw = Buffer.concat(chunks).toString();
-    if (raw.trim()) payload = JSON.parse(raw);
-  } catch {
-    payload = {};
-  }
-  finishOnce(payload);
-});
+if (require.main === module) {
+  const chunks = [];
+  process.stdin.on("data", (c) => chunks.push(c));
+  process.stdin.on("end", () => {
+    let payload = {};
+    try {
+      const raw = Buffer.concat(chunks).toString();
+      if (raw.trim()) payload = JSON.parse(raw);
+    } catch {
+      payload = {};
+    }
+    finishOnce(payload);
+  });
 
-_stdinTimer = setTimeout(() => finishOnce({}), 400);
+  _stdinTimer = setTimeout(() => finishOnce({}), 400);
+}
+
+module.exports = { resolveStateAndEvent };

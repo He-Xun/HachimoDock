@@ -194,7 +194,7 @@ export function reconcileDeviceSessionQueue(
   incomingSessions,
   nowMs = Date.now(),
   limit = 8,
-  { authoritativeSnapshot = false } = {},
+  { authoritativeSnapshot = false, restoreRecentTerminal = false } = {},
 ) {
   const now = Number(nowMs);
   const currentTime = Number.isFinite(now) ? now : Date.now();
@@ -310,21 +310,15 @@ export function reconcileDeviceSessionQueue(
       append(withTransitionMetadata(null, session, currentTime));
       continue;
     }
-    if (normalizedSessionState(session) === "stopped") {
-      /* Admit a stopped card only while its stop timestamp is still inside the
-       * normal terminal hold. Host snapshots keep the stopped row forever, so
-       * admitting it unconditionally would recreate the card after every
-       * expiry and leave an old "已停止" bubble on screen. */
-      const stoppedAt = Number(session?.lastModified || session?.statusUpdatedAt || 0);
-      if (!Number.isFinite(stoppedAt) || stoppedAt <= 0) continue;
-      const terminalUntil = stoppedAt + DEVICE_SESSION_TERMINAL_HOLD_MS;
+    const stopped = normalizedSessionState(session) === "stopped";
+    if (stopped || (restoreRecentTerminal && isTerminalDeviceSession(session))) {
+      // Reopening a hook-only feed must not start a new completion timer.
+      const endedAt = Number(stopped ? session.lastModified || session.statusUpdatedAt : session.statusUpdatedAt);
+      if (!Number.isFinite(endedAt) || endedAt <= 0 || endedAt > currentTime) continue;
+      const terminalUntil = endedAt + DEVICE_SESSION_TERMINAL_HOLD_MS;
       if (terminalUntil <= currentTime) continue;
-      append(withTransitionMetadata(
-        null,
-        { ...session, state: "stopped" },
-        currentTime,
-        terminalUntil,
-      ));
+      append(withTransitionMetadata(null, { ...session, state: canonicalTerminalState(session) },
+        currentTime, terminalUntil));
     }
   }
 

@@ -111,6 +111,7 @@ export function useP4SessionSync({
   boardDeviceId,
   agentId,
   usbConnected,
+  lanTarget,
   usbConnectionId = "",
   usbBootId = "",
   displayEnabled,
@@ -122,7 +123,9 @@ export function useP4SessionSync({
   formatSessionOption,
   push,
 }) {
-  const [selection, setSelection] = useState({ sessionId: "auto", selectedAt: 0 });
+  const scope = JSON.stringify([boardDeviceId, agentId]);
+  const [selections, setSelections] = useState({});
+  const selection = selections[scope] || { sessionId: "auto", selectedAt: 0 };
   const [bindingSyncRevision, requestBindingSync] = useReducer(
     (revision) => revision + 1,
     0,
@@ -207,14 +210,13 @@ export function useP4SessionSync({
 
   const onSessionChange = useCallback((nextSessionId) => {
     const value = nextSessionId || "auto";
-    setSelection({
+    setSelections(previous => ({ ...previous, [scope]: {
       sessionId: value,
       selectedAt: value === "auto" ? 0 : Date.now(),
-    });
-  }, []);
+    } }));
+  }, [scope]);
 
   useEffect(() => {
-    setSelection({ sessionId: "auto", selectedAt: 0 });
     pendingNoticeRef.current = null;
   }, [agentId, boardDeviceId]);
 
@@ -225,7 +227,7 @@ export function useP4SessionSync({
   }, [agentId]);
 
   useEffect(() => {
-    if (sessionId === "auto") return undefined;
+    if (!sessionsLoaded || sessionId === "auto") return undefined;
     const selectedStillExists = switchCandidates.some(
       (session) => normalizeText(session?.id) === normalizeText(sessionId),
     );
@@ -238,7 +240,18 @@ export function useP4SessionSync({
     const delay = Math.max(0, P4_MANUAL_SESSION_TIMEOUT_MS - elapsed);
     const timer = setTimeout(() => onSessionChange("auto"), delay);
     return () => clearTimeout(timer);
-  }, [agentId, onSessionChange, selection.selectedAt, sessionId, switchCandidates]);
+  }, [agentId, onSessionChange, selection.selectedAt, sessionId, sessionsLoaded, switchCandidates]);
+
+  const lastWirelessSelection = useRef("");
+  const wirelessSession = lanTarget?.selectionSequence && !lanTarget.selectionDirection &&
+    lanTarget.selectionAgent === agentId ? lanTarget.selectionSession : "";
+  useEffect(() => {
+    const key = JSON.stringify([boardDeviceId, lanTarget?.bootId, lanTarget?.selectionSequence]);
+    if (!wirelessSession || lastWirelessSelection.current === key ||
+        !switchCandidates.some(row => row.id === wirelessSession)) return;
+    lastWirelessSelection.current = key;
+    onSessionChange(wirelessSession);
+  }, [boardDeviceId, lanTarget, wirelessSession, switchCandidates, onSessionChange]);
 
   useEffect(() => {
     if (!agentId) return;
@@ -255,10 +268,13 @@ export function useP4SessionSync({
     const requestedSessionId = autoFollow
       ? normalizeText(selectedRoutingSession?.id)
       : sessionId;
-    if (!usbConnected && sessionsLoaded && agentSessionFeedFresh(agentId)) {
+    if (lanTarget && !usbConnected && sessionsLoaded && agentSessionFeedFresh(agentId)) {
       invoke("lan_agent_sessions", {
         input: {
-          agentId,
+          agentId, boardDeviceId, bootId: lanTarget.bootId,
+          sessionCwd: selectedSessionCwd, sessionTitleUnique: selectedSessionTitleUnique, autoFollow,
+          selectionSequence: lanTarget.selectionAgent && lanTarget.selectionAgent !== agentId
+            ? null : lanTarget.selectionSequence,
           sessionId: requestedSessionId,
           title: selectedDeviceSessionTitle,
           index: selectedSessionIndex,
@@ -269,7 +285,7 @@ export function useP4SessionSync({
         },
       }).catch(() => {});
     }
-    if (!enabled || !boardDeviceId) return;
+    if (!enabled || !usbConnected || !boardDeviceId || !sessionsLoaded) return;
     if (matchedNotice) pendingNoticeRef.current = null;
     const isCurrent = () => bindingScopeRef.current === bindingScope;
     const bindingPromise = enqueueP4SessionBinding(bindingQueueRef.current, isCurrent,
@@ -327,7 +343,7 @@ export function useP4SessionSync({
         }
       });
   }, [
-    activeSessionIdsSignature,
+    lanTarget, activeSessionIdsSignature,
     bindingScope,
     agentId,
     bindingSyncRevision,
@@ -366,6 +382,7 @@ export function useP4SessionSync({
           ? envelope.payload
           : {};
         if (normalizeText(payload.boardDeviceId) !== boardDeviceId) return;
+        if (payload.agentId && payload.agentId !== agentId) return;
         const action = normalizeText(payload.action);
         if (action === "session_clear") {
           const dismissed = {};

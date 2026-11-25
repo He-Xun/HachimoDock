@@ -38,7 +38,7 @@ static bool dispatch_component_binding_event(pet_p4_runtime_state_t *s,pet_p4_se
 static bool pet_p4_native_voice_key_tap(const char *value){(void)value;assert(!"unexpected native voice shortcut");return false;}
 static uint64_t esp_timer_get_time(void){return 1000000;}
 static bool pet_p4_state_usb_client_connected(const pet_p4_runtime_state_t *s,uint64_t t){(void)s;(void)t;return false;}
-static int pet_p4_audio_capture_start_button(bool b,uint32_t token){(void)b;assert(!token);return 0;}
+static int pet_p4_audio_capture_start_button(const pet_p4_runtime_state_t *b,uint32_t token){(void)b;assert(!token);return 0;}
 static int pet_p4_audio_capture_stop(void){return 0;}
 static void pet_p4_media_stop_background(pet_p4_send_line_fn f,void *ctx){(void)f;(void)ctx;assert(false);}
 ''' + function("static bool component_system_action(") + function("static const pet_p4_input_binding_t *active_global_priority_binding(") + function("static void dispatch_binding_event(") + r'''

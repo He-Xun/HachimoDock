@@ -29,7 +29,6 @@
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
 #if BSP_LCD_PANEL_AUTO
-#include "driver/ppa.h"
 #include "pet_p4_nv3049_pixels.h"
 #include "pet_p4_touch.h"
 #endif
@@ -52,10 +51,38 @@ static bool g_refresh_callback_logged;
 #if BSP_LCD_PANEL_AUTO
 static _Atomic int g_panel_model = PET_LCD_PANEL_UNKNOWN;
 static atomic_bool g_no_touch_profile;
-static const char *LCD_NVS_NAMESPACE = "pet_lcd";
-static const char *LCD_NVS_PROFILE = "nv3049_no_tp";
+static atomic_int g_configured_profile;
+static SemaphoreHandle_t g_nv_publish_lock;
+static bool g_nv_paused_for_flash;
+esp_err_t pet_p4_lcd_sleep_for_flash(void) {
+  if (pet_p4_lcd_panel_model() != PET_LCD_PANEL_NV3049 || !g_lcd_io) return ESP_ERR_INVALID_STATE;
+  if (!g_nv_publish_lock || !xSemaphoreTake(g_nv_publish_lock, LCD_REFRESH_WAIT_TICKS)) return ESP_ERR_TIMEOUT;
+  esp_err_t err = bsp_nv3049_sleep_for_flash(g_lcd_io, true);
+  g_nv_paused_for_flash = err == ESP_OK;
+  xSemaphoreGive(g_nv_publish_lock);
+  return err;
+}
+static _Atomic(const char *) g_selection = "pending";
 
-static esp_err_t load_no_touch_profile(bool *enabled) {
+const char *pet_p4_lcd_selection(void) {
+  return atomic_load(&g_selection);
+}
+const char *pet_p4_lcd_panel_name(void) {
+  switch (pet_p4_lcd_panel_model()) {
+    case PET_LCD_PANEL_ST7701: return "ST7701S";
+    case PET_LCD_PANEL_NV3049: return "NV3049F";
+    case PET_LCD_PANEL_ST7102: return "ST7102";
+    default: return "unidentified";
+  }
+}
+pet_lcd_profile_t pet_p4_lcd_configured_profile(void) {
+  return atomic_load_explicit(&g_configured_profile, memory_order_relaxed);
+}
+
+static const char *LCD_NVS_NAMESPACE = "pet_lcd";
+static const char *LCD_NVS_PROFILE = "profile";
+
+static esp_err_t load_lcd_profile(pet_lcd_profile_t *profile) {
   nvs_handle_t handle;
   uint8_t value = 0;
   esp_err_t err = nvs_open(LCD_NVS_NAMESPACE, NVS_READONLY, &handle);
@@ -64,16 +91,17 @@ static esp_err_t load_no_touch_profile(bool *enabled) {
     nvs_close(handle);
   }
   if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
-  if (value > 1) return ESP_ERR_INVALID_STATE;
-  *enabled = value == 1;
+  if (value > PET_LCD_PROFILE_ST7102) return ESP_ERR_INVALID_STATE;
+  *profile = (pet_lcd_profile_t)value;
   return ESP_OK;
 }
 
-esp_err_t pet_p4_lcd_save_no_touch_profile(bool enabled) {
+esp_err_t pet_p4_lcd_save_profile(pet_lcd_profile_t profile) {
+  if ((unsigned)profile > PET_LCD_PROFILE_ST7102) return ESP_ERR_INVALID_ARG;
   nvs_handle_t handle;
   esp_err_t err = nvs_open(LCD_NVS_NAMESPACE, NVS_READWRITE, &handle);
   if (err != ESP_OK) return err;
-  err = nvs_set_u8(handle, LCD_NVS_PROFILE, enabled ? 1 : 0);
+  err = nvs_set_u8(handle, LCD_NVS_PROFILE, (uint8_t)profile);
   if (err == ESP_OK) err = nvs_commit(handle);
   nvs_close(handle);
   return err;
@@ -86,75 +114,22 @@ bool pet_p4_lcd_no_touch_profile(void) {
 static uint8_t *g_nv_buffers[2];
 static unsigned g_nv_front;
 static atomic_uint g_nv_refresh;
-static TaskHandle_t g_nv_render_task;
-// CPU0 render-task state. Only a successful publication followed by a DMA
-// refresh on that core proves which of the two buffers is safe to overwrite.
-static enum { NV_READY, NV_FIRST_LATCH, NV_WAIT_LATCH, NV_UNKNOWN } g_nv_state;
-static unsigned g_nv_published_at, g_nv_published_front;
-static unsigned g_nv_recoveries;
-static bool g_nv_recovery_redraw;
-static TickType_t g_nv_last_draw_tick, g_nv_max_recovery_gap;
-static bool g_nv_reveal_on_full_draw;
-static ppa_client_handle_t g_nv_ppa;
-static atomic_bool g_nv_ppa_active;
 static uint32_t g_nv_last_refresh_tick;
 static atomic_uint g_nv_max_refresh_gap;
-
-bool pet_p4_lcd_nv3049_ppa_active(void) {
-  return atomic_load_explicit(&g_nv_ppa_active, memory_order_relaxed);
-}
 
 unsigned pet_p4_lcd_nv3049_max_refresh_gap(void) {
   return atomic_load_explicit(&g_nv_max_refresh_gap, memory_order_relaxed);
 }
 
-static esp_err_t nv_convert_ppa(const uint16_t *pixels, unsigned width, unsigned height, uint8_t *out) {
-  const ppa_srm_oper_config_t config = {
-    .in = {
-      .buffer = pixels, .pic_w = width, .pic_h = height,
-      .block_w = width, .block_h = height, .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
-    },
-    .out = {
-      .buffer = out, .buffer_size = BSP_LCD_H_RES * BSP_LCD_V_RES * 3U,
-      .pic_w = BSP_LCD_H_RES, .pic_h = BSP_LCD_V_RES, .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
-    },
-    .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-    .scale_x = 1.0f, .scale_y = 1.0f, .mode = PPA_TRANS_MODE_BLOCKING,
-  };
-  return ppa_do_scale_rotate_mirror(g_nv_ppa, &config);
-}
-
-static void nv_init_conversion(void) {
-  const ppa_client_config_t config = {
-    .oper_type = PPA_OPERATION_SRM,
-    .data_burst_length = PPA_DATA_BURST_LENGTH_32,
-  };
-  if (ppa_register_client(&config, &g_nv_ppa) != ESP_OK) return;
-
-  // Check RGB byte order and truncation on this silicon in the offscreen buffer.
-  static const uint16_t colors[] = {
-    0xf800, 0x07e0, 0x001f, 0x0000, 0xffff, 0x616b, 0xe6c5, 0x2ad6,
-    0x001f, 0x07e0, 0xf800, 0x0000, 0xffff, 0x616b, 0xe6c5, 0x2ad6,
-  };
-  esp_err_t err = nv_convert_ppa(colors, 8, 2, g_nv_buffers[1]);
-  if (err == ESP_OK) {
-    for (unsigned i = 0; i < sizeof(colors) / sizeof(colors[0]); ++i) {
-      const uint8_t *bgr = g_nv_buffers[1] + ((i / 8) * BSP_LCD_H_RES + i % 8) * 3;
-      uint16_t packed = ((bgr[2] & 0xf8U) << 8) | ((bgr[1] & 0xfcU) << 3) | (bgr[0] >> 3);
-      if (packed != colors[i]) {
-        err = ESP_ERR_INVALID_RESPONSE;
-        break;
-      }
-    }
-  }
-  if (err == ESP_OK) {
-    atomic_store_explicit(&g_nv_ppa_active, true, memory_order_relaxed);
-  } else {
-    ESP_LOGW(TAG, "NV3049 RGB888 PPA self-test failed: %s", esp_err_to_name(err));
-    ppa_unregister_client(g_nv_ppa);
-    g_nv_ppa = NULL;
-  }
-}
+static TaskHandle_t g_nv_render_task;
+// CPU0 render-task state. Only a successful publication followed by a DMA
+// refresh on that core proves which of the two buffers is safe to overwrite.
+static enum { NV_READY, NV_WAIT_LATCH, NV_UNKNOWN } g_nv_state;
+static unsigned g_nv_published_at, g_nv_published_front;
+static unsigned g_nv_recoveries;
+static bool g_nv_recovery_redraw;
+static TickType_t g_nv_last_draw_tick, g_nv_max_recovery_gap;
+static bool g_nv_reveal_on_full_draw;
 
 static esp_err_t nv_wait_for_refresh(unsigned published_at) {
   TickType_t started = xTaskGetTickCount();
@@ -168,8 +143,14 @@ static esp_err_t nv_wait_for_refresh(unsigned published_at) {
 }
 
 static esp_err_t nv_publish(unsigned index) {
+  if (!xSemaphoreTake(g_nv_publish_lock, LCD_REFRESH_WAIT_TICKS)) return ESP_ERR_TIMEOUT;
+  if (g_nv_paused_for_flash) {
+    xSemaphoreGive(g_nv_publish_lock);
+    return ESP_ERR_INVALID_STATE;
+  }
   esp_err_t err = esp_lcd_panel_draw_bitmap(
     g_panel_handle, 0, 0, BSP_LCD_H_RES, BSP_LCD_V_RES, g_nv_buffers[index]);
+  xSemaphoreGive(g_nv_publish_lock);
   if (err != ESP_OK) {
     // Even an IRQ after this error cannot tell us which index was latched.
     g_nv_state = NV_UNKNOWN;
@@ -198,7 +179,6 @@ static esp_err_t nv_recover(void) {
     return ESP_ERR_TIMEOUT;
   }
   g_nv_front = g_nv_published_front;
-  if (g_nv_state == NV_FIRST_LATCH) nv_init_conversion(); // SDK is scanning fb0 now.
   g_nv_state = NV_READY;
   g_nv_recovery_redraw = true;
   return ESP_OK;
@@ -307,18 +287,31 @@ esp_err_t pet_p4_lcd_init(void) {
 
   bsp_display_config_t config = {0};
 #if BSP_LCD_PANEL_AUTO
-  bool no_touch = false;
-  const esp_err_t profile_err = load_no_touch_profile(&no_touch);
+  pet_lcd_profile_t profile = PET_LCD_PROFILE_AUTO;
+  const esp_err_t profile_err = load_lcd_profile(&profile);
   if (profile_err != ESP_OK) {
     ESP_LOGW(TAG, "LCD profile unavailable: %s", esp_err_to_name(profile_err));
   }
-  atomic_store_explicit(&g_no_touch_profile, no_touch, memory_order_relaxed);
-  if (no_touch) {
-    config.nv3049 = true;
-    ESP_LOGI(TAG, "Panel NV3049F selected by saved no-touch profile");
-  } else {
-    config.nv3049 = pet_p4_touch_try_nv3049();
+  const bsp_display_id_t panel_id = bsp_probe_display_id();
+  const bool has_cst328 = pet_p4_touch_try_nv3049();
+  const bool has_st7123 = pet_p4_touch_try_st7123();
+  const char *selection = "legacy-default";
+  pet_lcd_panel_model_t model = PET_LCD_PANEL_ST7701;
+  if (panel_id != BSP_DISPLAY_ID_UNKNOWN) {
+    selection = "verified-panel-id";
+    if (panel_id == BSP_DISPLAY_ID_NV3049) model = PET_LCD_PANEL_NV3049;
+    if (panel_id == BSP_DISPLAY_ID_ST7102) model = PET_LCD_PANEL_ST7102;
+  } else if (has_cst328 != has_st7123) {
+    selection = "verified-touch";
+    model = has_cst328 ? PET_LCD_PANEL_NV3049 : PET_LCD_PANEL_ST7102;
+  } else if (profile != PET_LCD_PROFILE_AUTO) {
+    selection = "configured";
+    model = profile == PET_LCD_PROFILE_NV3049 ? PET_LCD_PANEL_NV3049 : PET_LCD_PANEL_ST7102;
   }
+  config.st7102 = model == PET_LCD_PANEL_ST7102;
+  config.nv3049 = model == PET_LCD_PANEL_NV3049;
+  atomic_store_explicit(&g_configured_profile, profile, memory_order_relaxed);
+  atomic_store_explicit(&g_no_touch_profile, config.nv3049 && !has_cst328, memory_order_relaxed);
   if (config.nv3049) {
     ESP_RETURN_ON_FALSE(xPortGetCoreID() == 0, ESP_ERR_INVALID_STATE, TAG,
                         "NV3049 initialization and scanout must share CPU0");
@@ -326,8 +319,16 @@ esp_err_t pet_p4_lcd_init(void) {
 #endif
   ESP_RETURN_ON_ERROR(bsp_display_new(&config, &g_panel_handle, &g_lcd_io), TAG, "initialize display");
 #if BSP_LCD_PANEL_AUTO
-  atomic_store_explicit(&g_panel_model,
-    config.nv3049 ? PET_LCD_PANEL_NV3049 : PET_LCD_PANEL_ST7701, memory_order_relaxed);
+  // Remember a positive identification after the display driver starts. A
+  // later boot can use the same display when its optional FPC is detached.
+  if (profile_err == ESP_OK && profile == PET_LCD_PROFILE_AUTO &&
+      panel_id == BSP_DISPLAY_ID_UNKNOWN && config.nv3049 && has_cst328 &&
+      pet_p4_lcd_save_profile(PET_LCD_PROFILE_NV3049) != ESP_OK) {
+    ESP_LOGW(TAG, "Could not retain verified NV3049F profile");
+  }
+  atomic_store(&g_selection, selection);
+  atomic_store(&g_panel_model, model);
+  ESP_LOGI(TAG, "LCD %s selected by %s", pet_p4_lcd_panel_name(), selection);
 #endif
   if (!g_refresh_done_sem) {
     g_refresh_done_sem = xSemaphoreCreateBinary();
@@ -351,6 +352,8 @@ esp_err_t pet_p4_lcd_init(void) {
   );
 #if BSP_LCD_PANEL_AUTO
   if (config.nv3049) {
+    g_nv_publish_lock = xSemaphoreCreateMutex();
+    if (!g_nv_publish_lock) return ESP_ERR_NO_MEM;
     void *first = NULL, *second = NULL;
     ESP_RETURN_ON_ERROR(
       esp_lcd_dpi_panel_get_frame_buffer(g_panel_handle, 2, &first, &second),
@@ -363,10 +366,8 @@ esp_err_t pet_p4_lcd_init(void) {
     g_nv_last_draw_tick = xTaskGetTickCount(); // origin until first completed draw
     g_nv_published_front = 0;
     g_nv_published_at = atomic_load(&g_nv_refresh);
-    if (nv_wait_for_refresh(g_nv_published_at) == ESP_OK) {
-      nv_init_conversion();
-    } else {
-      g_nv_state = NV_FIRST_LATCH;
+    if (nv_wait_for_refresh(g_nv_published_at) != ESP_OK) {
+      g_nv_state = NV_WAIT_LATCH;
       ESP_LOGW(TAG, "waiting for first NV3049 DMA refresh");
     }
   }
@@ -487,16 +488,7 @@ static esp_err_t lcd_draw_core(int x,int y,int width,int height,const uint16_t *
     if (!full) {
       memcpy(g_nv_buffers[next], g_nv_buffers[g_nv_front], BSP_LCD_H_RES * BSP_LCD_V_RES * 3U);
     }
-    bool converted = false;
-    if (full && atomic_load_explicit(&g_nv_ppa_active, memory_order_relaxed)) {
-      esp_err_t err = nv_convert_ppa(pixels, width, height, g_nv_buffers[next]);
-      converted = err == ESP_OK;
-      if (!converted) {
-        atomic_store_explicit(&g_nv_ppa_active, false, memory_order_relaxed);
-        ESP_LOGW(TAG, "NV3049 RGB888 PPA disabled: %s", esp_err_to_name(err));
-      }
-    }
-    if (!converted && !pet_nv3049_blit_rgb565(g_nv_buffers[next], x, y, width, height, pixels)) {
+    if (!pet_nv3049_blit_rgb565(g_nv_buffers[next], x, y, width, height, pixels)) {
       return ESP_ERR_INVALID_ARG;
     }
   } else

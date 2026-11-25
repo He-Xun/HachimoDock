@@ -1,3 +1,4 @@
+#include "pet_p4_protocol.h"
 /*
  * [Input] Debounced SW1-SW3/shared center-key/legacy encoder GPIO events,
  *         calibrated four-direction joystick ADC samples, and validated
@@ -215,6 +216,7 @@ static bool action_is_allowed(const char *action) {
     "agent_enter",
     "agent_prompt",
     "session_next",
+    "nav_left", "nav_right",
     "session_previous",
     "session_clear",
     "dsh_interrupt",
@@ -281,8 +283,8 @@ static void load_default_config(pet_p4_input_config_t *config) {
   add_default_binding(config, "button.encoder.short_press", "page_enter", "");
   add_default_binding(config, "button.encoder.long_press", "disabled", "");
   add_default_binding(config, "button.encoder.hold", "disabled", "");
-  add_default_binding(config, "knob.rotate_cw", "session_next", "");
-  add_default_binding(config, "knob.rotate_ccw", "session_previous", "");
+  add_default_binding(config, "knob.rotate_cw", "nav_right", "");
+  add_default_binding(config, "knob.rotate_ccw", "nav_left", "");
   add_default_binding(config, "joystick.up", "session_previous", "");
   add_default_binding(config, "joystick.down", "session_next", "");
 }
@@ -490,7 +492,7 @@ static bool migrate_v8_config(pet_p4_input_config_t *config) {
     "session_next",
     ""
   );
-  config->version = PET_P4_INPUT_CONFIG_VERSION;
+  config->version = 9;
   return true;
 }
 
@@ -502,7 +504,12 @@ static bool migrate_input_config(pet_p4_input_config_t *config) {
   if (config->version == 5 && !migrate_v5_config(config)) return false;
   if (config->version == 6 && !migrate_v6_config(config)) return false;
   if (config->version == 7 && !migrate_v7_config(config)) return false;
-  return config->version == 8 && migrate_v8_config(config);
+  if (config->version == 8 && !migrate_v8_config(config)) return false;
+  if (config->version != 9 || !config_bindings_are_valid(config)) return false;
+  migrate_default_binding(config, "knob.rotate_ccw", "session_previous", "", "nav_left", "");
+  migrate_default_binding(config, "knob.rotate_cw", "session_next", "", "nav_right", "");
+  config->version = PET_P4_INPUT_CONFIG_VERSION;
+  return true;
 }
 
 static esp_err_t persist_config(const pet_p4_input_config_t *config) {
@@ -1092,6 +1099,10 @@ static void send_input_event(
       return;
     }
   }
+  if (state && (!strcmp(resolved_action, "nav_left") || !strcmp(resolved_action, "nav_right"))) {
+    cJSON_AddStringToObject(payload, "agentId", state->current_session_agent);
+    cJSON_AddStringToObject(payload, "bootId", pet_p4_boot_identity());
+  }
   if (state
       && (strcmp(resolved_action, "session_next") == 0
           || strcmp(resolved_action, "session_previous") == 0)
@@ -1100,6 +1111,7 @@ static void send_input_event(
     const pet_p4_session_queue_item_t *selected =
       &state->session_queue[state->current_session_index - 1];
     cJSON_AddStringToObject(payload, "sessionId", selected->id);
+    cJSON_AddStringToObject(payload, "agentId", state->current_session_agent);
     cJSON_AddStringToObject(payload, "sessionTitle", selected->title);
     cJSON_AddNumberToObject(payload, "sessionIndex", state->current_session_index);
     cJSON_AddNumberToObject(payload, "sessionCount", state->session_queue_count);
@@ -1246,16 +1258,30 @@ static bool apply_local_action(
     state->last_update_ms = ts_ms;
     return true;
   }
-  if (strcmp(binding->action, "session_next") == 0
+  const bool horizontal = !strcmp(binding->action, "nav_left") || !strcmp(binding->action, "nav_right");
+  if (horizontal || strcmp(binding->action, "session_next") == 0
       || strcmp(binding->action, "session_previous") == 0) {
     const bool main_open = strcmp(state->screen_page, "main") == 0;
     const bool center_open = strcmp(state->screen_page, "components") == 0;
     if (!main_open && !center_open) return false;
-    const int direction = strcmp(binding->action, "session_previous") == 0 ? -1 : 1;
+    const int direction = (!strcmp(binding->action, "nav_left") || !strcmp(binding->action, "session_previous")) ? -1 : 1;
     if (center_open) {
       if (!pet_p4_miniapp_catalog_move(direction)) return false;
       copy_text(action_override, action_override_size, "component_select");
       state->last_update_ms = ts_ms;
+      return true;
+    }
+    if (state->session_voice_active || pet_p4_conversation_active(state) || pet_p4_audio_conversation_active()
+        || (state->voice_feedback.phase >= PET_VOICE_LISTENING && state->voice_feedback.phase <= PET_VOICE_SUBMITTING)) {
+      copy_text(state->current_session_notice, sizeof(state->current_session_notice), "请先完成当前语音");
+      state->session_notice_until_ms = ts_ms + 1600;
+      copy_text(action_override, action_override_size, "navigation_blocked");
+      return true;
+    }
+    if (horizontal) {
+#if PET_P4_SYSTEM_WIFI
+      pet_p4_lan_select_session(state, direction);
+#endif
       return true;
     }
     if (state->session_queue_count == 0) return false;
@@ -1280,6 +1306,9 @@ static bool apply_local_action(
       sizeof(state->current_session_title),
       state->session_queue[selected].title
     );
+#if PET_P4_SYSTEM_WIFI
+    pet_p4_lan_select_session(state, 0);
+#endif
     state->last_update_ms = ts_ms;
     return true;
   }
@@ -1377,6 +1406,7 @@ static bool component_system_action(const char *action) {
     && (
       strcmp(action, "page_toggle") == 0
       || strcmp(action, "session_next") == 0
+      || !strcmp(action, "nav_left") || !strcmp(action, "nav_right")
       || strcmp(action, "session_previous") == 0
       || strcmp(action, "page_enter") == 0
       || strcmp(action, "page_back") == 0
@@ -1647,7 +1677,7 @@ static void dispatch_binding_event(
       if (state && !strcmp(state->screen_page, "main")
           && pet_p4_state_usb_client_connected(state, now))
         token = pet_voice_feedback_begin(&state->voice_feedback, now);
-      handled_locally = pet_p4_audio_capture_start_button(state && state->session_queue_count == 0, token) == ESP_OK;
+      handled_locally = pet_p4_audio_capture_start_button(state, token) == ESP_OK;
       if (state) {
         state->session_voice_active = handled_locally;
         if (token && !handled_locally) {

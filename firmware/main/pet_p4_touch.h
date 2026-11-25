@@ -12,6 +12,9 @@ extern "C" {
 #if BSP_LCD_PANEL_AUTO
 /* A positive ID selects NV3049. Every other result leaves legacy display available. */
 bool pet_p4_touch_try_nv3049(void);
+/* Startup only, before touch_init. True is a positive BOE ST7102 module
+ * clue. Both probes can return true; the first verified touch owns polling. */
+bool pet_p4_touch_try_st7123(void);
 #endif
 esp_err_t pet_p4_touch_init(void);
 bool pet_p4_touch_ready(void);

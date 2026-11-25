@@ -40,7 +40,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--help" || token === "-h") result.help = true;
-    else if (token.startsWith("--")) {
+    else if (["--build-dir", "--output", "--license", "--notice"].includes(token)) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new Error(`missing value for ${token}`);
       result[token.slice(2)] = value;
@@ -96,8 +96,8 @@ function checkEmbeddedVersion(factoryBytes, version) {
 }
 
 // Shown before entering the ROM loader, while the operator can still disconnect power.
-const adapterBeforeFlash = "使用 HD28142C22 新屏转接板做完整烧录时，请先断开整机所有电源，断开屏幕，再仅给主板接 USB。";
-const adapterAfterFlash = "该转接板的无触摸版请先通过 USB 保存 nv3049-no-touch 屏型，再断开整机所有电源，接回屏幕并冷启动。带触摸版使用自动识别，断电接回即可。";
+const adapterBeforeFlash = "保持屏幕连接，用 USB 接入主板。工具会自动选择屏幕保护方式，并在擦写前核对设备和镜像。";
+const adapterAfterFlash = "设备已自动重启。请观察第一屏和宠物动画。";
 
 function macFlashScript(imageName, manifestName, board, sha256) {
   return `#!/bin/zsh
@@ -134,8 +134,7 @@ if [[ -z "\${port}" ]]; then
   exit 1
 fi
 
-echo "本包目标板型：${board}。请核对主板丝印。"
-read "physical_board?请输入实际板型（pico 或 wifi6）："
+echo "本包目标板型：${board}。"
 echo "警告：将擦除设备全部设置、形象和组件，并写入完整出厂镜像。"
 read "confirmation?输入 ERASE 继续："
 if [[ "\${confirmation}" != "ERASE" ]]; then
@@ -143,9 +142,8 @@ if [[ "\${confirmation}" != "ERASE" ]]; then
   exit 1
 fi
 
-"\${venv}/bin/python" "\${script_dir}/flash_checked.py" --port "\${port}" --baud 921600 --image "\${image}" --manifest "\${package_root}/firmware/${manifestName}" --board "\${physical_board}" --sha256 "${sha256}"
+"\${venv}/bin/python" "\${script_dir}/flash_checked.py" --port "\${port}" --baud 921600 --image "\${image}" --manifest "\${package_root}/firmware/${manifestName}" --detect-board --confirm-erase "\${confirmation}" --sha256 "${sha256}"
 echo "${adapterAfterFlash}"
-echo "烧录与校验完成。请松开 BOOT，并按一次 RESET/EN 或重新上电。"
 `;
 }
 
@@ -191,16 +189,14 @@ if (-not $Port.Trim()) {
 }
 if (-not $Port.Trim()) { throw "未输入串口，已取消。" }
 
-Write-Host "本包目标板型：${board}。请核对主板丝印。"
-$PhysicalBoard = Read-Host "请输入实际板型（pico 或 wifi6）"
+Write-Host "本包目标板型：${board}。"
 Write-Warning "将擦除设备全部设置、形象和组件，并写入完整出厂镜像。"
 $Confirmation = Read-Host "输入 ERASE 继续"
 if ($Confirmation -cne "ERASE") { throw "确认不匹配，已取消。" }
 
-& $VenvPython (Join-Path $PSScriptRoot "flash_checked.py") --port $Port --baud 921600 --image $Image --manifest (Join-Path $PackageRoot "firmware/${manifestName}") --board $PhysicalBoard --sha256 "${sha256}"
+& $VenvPython (Join-Path $PSScriptRoot "flash_checked.py") --port $Port --baud 921600 --image $Image --manifest (Join-Path $PackageRoot "firmware/${manifestName}") --detect-board --confirm-erase $Confirmation --sha256 "${sha256}"
 if ($LASTEXITCODE -ne 0) { throw "烧录未完成。请检查芯片版本和上方错误，勿强制忽略检查。" }
 Write-Host "${adapterAfterFlash}"
-Write-Host "烧录与校验完成。请松开 BOOT，并按一次 RESET/EN 或重新上电。"
 `;
 }
 
@@ -321,7 +317,7 @@ const toolDir = join(packageRoot, "tools");
 mkdirSync(segmentDir, { recursive: true });
 mkdirSync(resourceDir, { recursive: true });
 mkdirSync(toolDir, { recursive: true });
-for (const name of ["flash_checked.py", "p4_image_compat.py"]) {
+for (const name of ["flash_checked.py", "p4_image_compat.py", "panel_ram_common.py", "panel_ram_v13.py", "panel_ram_v32.py"]) {
   copyFileSync(join(repositoryRoot, "firmware", "tools", name), join(toolDir, name));
 }
 
@@ -345,7 +341,8 @@ cpSync(join(repositoryRoot, "licenses"), join(packageRoot, "licenses"), { recurs
 const macTool = join(toolDir, "flash-macOS.command");
 const windowsTool = join(toolDir, "flash-Windows.ps1");
 writeFileSync(macTool, macFlashScript(imageName, manifestName, board, manifest.sha256));
-writeFileSync(windowsTool, windowsFlashScript(imageName, manifestName, board, manifest.sha256));
+// Windows PowerShell 5.1 needs a BOM to read the Chinese safety prompts as UTF-8.
+writeFileSync(windowsTool, "\uFEFF" + windowsFlashScript(imageName, manifestName, board, manifest.sha256));
 chmodSync(macTool, 0o755);
 
 writeFileSync(
@@ -353,12 +350,13 @@ writeFileSync(
   `# 内置资源说明\n\n- \`expanded-storage/\`：出厂 SPIFFS 的展开内容，含默认形象索引、${manifest.components.count} 个内置组件清单及受限 PNG sprite。\n- \`../firmware/segments/${storageResourceName}\`：完整存储分区镜像。\n- \`../firmware/segments/${appearanceResourceName}\`：默认西高地 H.264 形象分区镜像。\n- 最终烧录请始终使用 \`../firmware/${imageName}\`，不要逐个写入资源文件。\n`,
 );
 
-const readme = `# HachimoDock ESP32-P4 完整出厂烧录包\n\n版本：${manifest.version}\n\n分区布局：${layoutLabel}。普通OTA不会更新分区表。新设备或明确恢复出厂可整片擦除后完整烧录；保留旧数据的布局迁移须另行准备，不能把覆盖分区表或自动格式化当成迁移。\n\n本包不只是应用固件，包含完整 factory.bin、Bootloader、分区表、OTA 元数据、默认西高地形象、${manifest.components.count} 个内置组件、校验清单，以及 Windows/macOS 引导烧录工具。\n\n## 推荐用法\n\n1. 关闭 Pet Manager。\n2. 确认设备板型为 ${boardModel}。WiFi6 板通过 CH343 USB-UART 烧录时，保持 USB 数据路径跳线断开。\n3. macOS 双击 \`tools/flash-macOS.command\`；Windows 右键 \`tools/flash-Windows.ps1\` 并选择“使用 PowerShell 运行”。\n4. 首次运行会在本包内创建隔离的 esptool 环境，需要 Python 3.10+ 和网络。\n5. 按提示选择串口、核对实物板型并输入 \`ERASE\`。工具会擦除整片 Flash，再把完整镜像从 \`0x0\` 写入并校验。\n\n## 重要警告\n\n该操作会覆盖设备设置、形象和组件。日常升级请使用 Pet Manager 的“固件升级”；只有新设备或明确恢复出厂时才使用本包。\n\n如果连接失败，按住 BOOT，短按一次 RESET/EN，松开 BOOT 后重试。若 921600 不稳定，可将工具脚本中的波特率改为 460800 后重新完整烧录。\n\n## 内容\n\n- \`firmware/${imageName}\`：推荐烧录的完整镜像（地址 0x0）\n- \`firmware/${manifestName}\`：镜像内容、分区和 SHA-256 清单\n- \`firmware/segments/\`：可独立核验的各二进制段，不建议普通用户分别烧录\n- \`resources/\`：默认形象及组件资源清单/分区资料\n- \`tools/\`：Windows/macOS 烧录工具\n- \`SHA256SUMS\`：包内全部文件校验值\n`;
+const readme = `# HachimoDock ESP32-P4 完整出厂烧录包\n\n版本：${manifest.version}\n\n分区布局：${layoutLabel}。普通OTA不会更新分区表。新设备或明确恢复出厂可整片擦除后完整烧录；保留旧数据的布局迁移须另行准备，不能把覆盖分区表或自动格式化当成迁移。\n\n本包不只是应用固件，包含完整 factory.bin、Bootloader、分区表、OTA 元数据、默认西高地形象、${manifest.components.count} 个内置组件、校验清单，以及 Windows/macOS 引导烧录工具。\n\n## 推荐用法\n\n1. 关闭 Pet Manager。\n2. 本包适用于 ${boardModel}。WiFi6 板通过 CH343 USB-UART 烧录时，保持 USB 数据路径跳线断开。\n3. macOS 双击 \`tools/flash-macOS.command\`；Windows 右键 \`tools/flash-Windows.ps1\` 并选择“使用 PowerShell 运行”。\n4. 首次运行会在本包内创建隔离的 esptool 环境，需要 Python 3.10+ 和网络。\n5. 选择串口，确认要清空该设备后输入 \`ERASE\`。工具会自动读取设备信息；无法区分 WiFi6 与 Pico 底板时，会提示核对主板丝印。校验通过后擦除整片 32 MiB Flash，读回并确认全片为空，再把完整镜像从 \`0x0\` 写入并校验。\n\n## 重要警告\n\n该操作会覆盖设备设置、形象和组件。日常升级请使用 Pet Manager 的“固件升级”；只有新设备或明确恢复出厂时才使用本包。\n\n如果连接失败，请先核对串口并重试。配有自动下载电路的空板直接接 USB。没有自动下载电路的板子可按住 BOOT 接入 USB，进入下载模式后松开 BOOT。两种方式都保持显示排线原样。已有固件的设备请先正常启动，让工具读取屏型和休眠能力。若 921600 不稳定，可将工具脚本中的波特率改为 460800 后重新完整烧录。\n\n## 内容\n\n- \`firmware/${imageName}\`：推荐烧录的完整镜像（地址 0x0）\n- \`firmware/${manifestName}\`：镜像内容、分区和 SHA-256 清单\n- \`firmware/segments/\`：可独立核验的各二进制段，不建议普通用户分别烧录\n- \`resources/\`：默认形象及组件资源清单/分区资料\n- \`tools/\`：Windows/macOS 烧录工具\n- \`SHA256SUMS\`：包内全部文件校验值\n`;
 const toolGuide = `
 ## HD28142C22 转接屏的完整烧录
 
 ${adapterBeforeFlash}
 ${adapterAfterFlash}
+仅当应用通过触摸或面板 ID 确认 ST7102 时跳过 NV 休眠。仅有已保存的屏型配置时，工具仍执行原有屏幕保护流程。屏幕 ID 为全 FF 且电源状态有效时，工具沿用既有流程确认休眠后继续擦写。面板已休眠时只读复核。其他无法识别的 ID 沿用老屏回退，不需要选择屏幕。已知 NV3049F 须确认休眠；Wi-Fi 6 v1.3、v3.2 在应用确认休眠后还会进入 ROM 复核。
 日常升级优先使用客户端应用 OTA，已保存的屏型会保留。
 
 ## 工具版本与 v3 接线
@@ -382,12 +380,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\\tools\\flash-Windows.ps1 
 
 请把 COM5 改为设备实际串口。此参数只影响本次 PowerShell 进程，不修改全局执行策略。请先确认包来源和 SHA256SUMS。
 
-烧录工具会先读取芯片版本，并核对完整镜像中的 Bootloader 和应用范围；确认匹配后才擦除、写入和校验。全部完成后，松开 BOOT 并重启，检查宠物画面和客户端连接。烧录速率默认 921600，必要时改为 460800；设备正常运行的串口速率为 4M，两者不同。
+烧录工具会先读取芯片版本，并核对完整镜像中的 Bootloader 和应用范围；确认匹配后才擦除、写入和校验。写入校验完成后设备会自动重启，请检查宠物画面和客户端连接。烧录速率默认 921600，必要时改为 460800；设备正常运行的串口速率为 4M，两者不同。
 `;
 const revisionLabel = (revision) => `${Math.floor(revision / 100)}.${revision % 100}`;
 writeFileSync(join(packageRoot, "README-FLASHING-CN.md"), readme.replace(
   `版本：${manifest.version}`,
-  `版本：${manifest.version}\n\n适用板型：${boardModel}。请核对开发板标识；工具只自动检查芯片修订版，Pico 与 WiFi6 不可互刷。适用芯片：ESP32-P4 ${chipFamily}（${revisionLabel(manifest.chipRevisionMin)}～${revisionLabel(manifest.chipRevisionMax)}）。Windows/macOS 共用本包；v1 与 v3 不可互刷。工具会在擦除前核对芯片版本。`,
+  `版本：${manifest.version}\n\n适用板型：${boardModel}。请核对开发板标识；工具核对底板和芯片修订版，Pico 与 WiFi6 不可互刷。适用芯片：ESP32-P4 ${chipFamily}（${revisionLabel(manifest.chipRevisionMin)}～${revisionLabel(manifest.chipRevisionMax)}）。Windows/macOS 共用本包；v1 与 v3 不可互刷。工具会在擦除前核对芯片版本。`,
 ).replaceAll("${manifest.components.count} 个内置组件", `${manifest.components.count} 个内置组件`) + toolGuide);
 
 const contentManifest = {

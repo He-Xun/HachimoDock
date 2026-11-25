@@ -3,11 +3,11 @@
   "purpose": "Unchanged upstream license/notice texts, not first-party relicensing",
   "selection": "Cargo normal dependency graph excluding build/dev, with direct proc-macro grants labeled separately; npm production-declaration superset (not a claim all packages enter frontend bundle). Original alternative grants are retained; recipients retain upstream rights.",
   "lockfiles": {
-    "pc/package-lock.json": "2b8394a1bef7a9e6a0a5889e707846eba71cbd552b67d5584b6c3ec7547c87a3",
-    "pc/src-tauri/Cargo.lock": "15a2d63798cf62d539b83fbe737ae4929125c3b2279c43f3d613c6604f7f7a34",
+    "pc/package-lock.json": "d91d1075b5f1e7906095cb9c094891fb2d6d9e069e03be37d88574f219d7d7e9",
+    "pc/src-tauri/Cargo.lock": "e7f40cd0371d3ba474a42b8b0f6ccb05c99e2592ed7bbd7b1824e28965a0ffca",
     "pc/src-tauri/bridge/packages/clawd-backend-service/package-lock.json": "ac690b1de03c3f9606dd10eee99cea6c9118713fa20c43cff7afa1906b42d894"
   },
-  "packages": 461,
+  "packages": 458,
   "requiredPackages": [
     "cargo:accessibility-sys@0.2.0",
     "cargo:accessibility@0.2.0",
@@ -460,12 +460,9 @@
     "npm:@tauri-apps/plugin-dialog@2.7.1",
     "npm:@tauri-apps/plugin-fs@2.5.1",
     "npm:@tauri-apps/plugin-http@2.5.9",
-    "npm:fsevents@2.3.2",
     "npm:js-tokens@4.0.0",
     "npm:loose-envify@1.4.0",
     "npm:lucide-react@0.511.0",
-    "npm:playwright-core@1.59.1",
-    "npm:playwright@1.59.1",
     "npm:react-dom@18.3.1",
     "npm:react@18.3.1",
     "npm:scheduler@0.23.2",
@@ -11981,17 +11978,6 @@
       "bundleOffset": 4120369
     },
     {
-      "package": "npm:fsevents@2.3.2",
-      "licenseExpression": "MIT",
-      "scopes": [
-        "frontend-production-declaration-superset"
-      ],
-      "sourceFile": "LICENSE",
-      "sourceSHA256": "2a8a5d6197bb97a018b8a190dd3ed853d750ca87c8e80c17aad41d6c6ff448e1",
-      "bytes": 1133,
-      "bundleOffset": 4121299
-    },
-    {
       "package": "npm:js-tokens@4.0.0",
       "licenseExpression": "MIT",
       "scopes": [
@@ -12000,7 +11986,7 @@
       "sourceFile": "LICENSE",
       "sourceSHA256": "2213d91c606205c71eb051a199478cdc2adde945893404d7f1421436dd6d5cc1",
       "bytes": 1103,
-      "bundleOffset": 4122475
+      "bundleOffset": 4121300
     },
     {
       "package": "npm:loose-envify@1.4.0",
@@ -12011,7 +11997,7 @@
       "sourceFile": "LICENSE",
       "sourceSHA256": "4eb7543b08d955a6d23fcc224601d43ff566e775be918805e26210d7f6eb4893",
       "bytes": 1100,
-      "bundleOffset": 4123624
+      "bundleOffset": 4122449
     },
     {
       "package": "npm:lucide-react@0.511.0",
@@ -12022,51 +12008,7 @@
       "sourceFile": "LICENSE",
       "sourceSHA256": "1e7290b35280a048667bbf0ebabac1c7fd52a75300e8b2946ac165715997f2bc",
       "bytes": 880,
-      "bundleOffset": 4124772
-    },
-    {
-      "package": "npm:playwright-core@1.59.1",
-      "licenseExpression": "Apache-2.0",
-      "scopes": [
-        "frontend-production-declaration-superset"
-      ],
-      "sourceFile": "LICENSE",
-      "sourceSHA256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb",
-      "bytes": 11601,
-      "bundleOffset": 4125702
-    },
-    {
-      "package": "npm:playwright-core@1.59.1",
-      "licenseExpression": "Apache-2.0",
-      "scopes": [
-        "frontend-production-declaration-superset"
-      ],
-      "sourceFile": "NOTICE",
-      "sourceSHA256": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d",
-      "bytes": 254,
-      "bundleOffset": 4137352
-    },
-    {
-      "package": "npm:playwright@1.59.1",
-      "licenseExpression": "Apache-2.0",
-      "scopes": [
-        "frontend-production-declaration-superset"
-      ],
-      "sourceFile": "LICENSE",
-      "sourceSHA256": "45873d00a0dd243596deb4aa23b2493b3d1f0671921bf2538ea431d7380220eb",
-      "bytes": 11601,
-      "bundleOffset": 4137651
-    },
-    {
-      "package": "npm:playwright@1.59.1",
-      "licenseExpression": "Apache-2.0",
-      "scopes": [
-        "frontend-production-declaration-superset"
-      ],
-      "sourceFile": "NOTICE",
-      "sourceSHA256": "6d602191187b35b9b01d2cffa01c8469c2c8d9de8a96f1bf868e0f264f51c81d",
-      "bytes": 254,
-      "bundleOffset": 4149296
+      "bundleOffset": 4123597
     },
     {
       "package": "npm:react-dom@18.3.1",
@@ -12077,7 +12019,7 @@
       "sourceFile": "LICENSE",
       "sourceSHA256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
       "bytes": 1086,
-      "bundleOffset": 4149594
+      "bundleOffset": 4124521
     },
     {
       "package": "npm:react@18.3.1",
@@ -12088,7 +12030,7 @@
       "sourceFile": "LICENSE",
       "sourceSHA256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
       "bytes": 1086,
-      "bundleOffset": 4150720
+      "bundleOffset": 4125647
     },
     {
       "package": "npm:scheduler@0.23.2",
@@ -12099,7 +12041,7 @@
       "sourceFile": "LICENSE",
       "sourceSHA256": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
       "bytes": 1086,
-      "bundleOffset": 4151850
+      "bundleOffset": 4126777
     },
     {
       "package": "npm:ws@8.21.1",
@@ -12110,10 +12052,10 @@
       "sourceFile": "LICENSE",
       "sourceSHA256": "2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef",
       "bytes": 1183,
-      "bundleOffset": 4152973
+      "bundleOffset": 4127900
     }
   ],
-  "bundleSHA256": "96112f163a22976dc821c7328b01582c74870003921c251615c67dd643971662",
+  "bundleSHA256": "52b4562c1738933599e0d2191a49c8921d5765c6e04e086a617268209df3a337",
   "unreviewed": "Assets/fonts/firmware/optional legacy voice and future dependency versions need separate ownership/license review. No automatic whole-project license conclusion.",
   "correspondingCargoSource": {
     "cargo:accessibility-sys@0.2.0": {

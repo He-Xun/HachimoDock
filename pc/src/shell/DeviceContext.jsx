@@ -21,27 +21,31 @@ import { invoke } from "@tauri-apps/api/core";
 import { boundedLanRead, LAN_AGENT_PAIRING_UPDATED, readRealtimeWifiBoard } from "../dashboard/lanAgentPairing.js";
 import { buildUsageHelp } from "../lib/usage-help.js";
 import { createRealtimePressHandler } from "../lib/realtime-press.js";
+import { useOptionalToast } from "./ToastStack.jsx";
 import { listen } from "@tauri-apps/api/event";
 import {
   DEFAULT_AGENT_ID,
   FIXED_AGENT_OPTIONS,
-  assignAppearanceToAgent,
-  assignedAgentIds,
+  channelLabelForId,
   loadAgentAppearanceMap,
   loadEnabledAgents,
   normalizeDetectedAgents,
-  saveAgentAppearanceMap,
   saveEnabledAgents,
 } from "../lib/agent-appearance-config.js";
 import {
+  ACTIVE_APPEARANCE_KEY,
+  readActiveAppearanceId,
   applyDesktopPetAssignment,
   appearanceConfirmationRequired,
   createDesktopPetIntentId,
   APPEARANCE_SYNC_CANCELLED_MESSAGE,
   FOLLOW_ASSIGNMENT_BUSY_MESSAGE,
 } from "../lib/desktop-pet-assignment.js";
+import { fetchAgentBusStatus, fetchAgentSessions } from "../lib/agent-bus-client.js";
+import { ensureFollowQueueRuntime, updateFollowQueue, usbNavigationOrigin, workbuddyFollowSnapshot } from "../lib/follow-queue.js";
 import { wifiAppearanceProgress } from "../lib/appearance-delivery.js";
 import { getAppearance, listAppearances } from "../lib/appearance-store.js";
+import { BUILTIN_TERRIER_APPEARANCE_ID } from "../lib/builtin-appearances.js";
 import { buildRealtimeChatStartInput, PERSONA_VOICE_UPDATED_EVENT } from "../lib/persona-voice.js";
 import { componentPetVoice, createComponentVoiceSync } from "../lib/component-pet-voice.js";
 import {
@@ -79,12 +83,12 @@ export const DeviceContext = createContext(null);
 const EMPTY_USAGE_HELP = buildUsageHelp();
 
 function bridgeEnabledAgents(profile) {
-  const selectedAgentId = profile?.selectedAgentId || "";
-  if (selectedAgentId) return new Set([selectedAgentId]);
   const enabled = Array.isArray(profile?.enabledAgents)
-    ? profile.enabledAgents.filter(Boolean)
+    ? profile.enabledAgents.map((id) => String(id || "").trim()).filter(Boolean)
     : [];
-  return enabled.length > 0 ? new Set([enabled[0]]) : null;
+  if (enabled.length > 0) return new Set(enabled);
+  const selectedAgentId = String(profile?.selectedAgentId || "").trim();
+  return selectedAgentId ? new Set([selectedAgentId]) : null;
 }
 
 export function DeviceContextProvider({ binding: bindingProp, onBindingChange, children }) {
@@ -118,11 +122,16 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
   const realtimeWifiReady = Boolean(wifi && wifiStatus?.wirelessRealtime && wifiStatus?.controlTrusted);
   const [wifiAppearance, setWifiAppearance] = useState(null);
   const [appearances, setAppearances] = useState([]);
-  const [agentAppearanceMap, setAgentAppearanceMap] = useState({});
+  const [appearanceId, setAppearanceId] = useState(readActiveAppearanceId);
+  const confirmAppearance = useCallback((id) => {
+    setAppearanceId(id);
+    try { localStorage.setItem(ACTIVE_APPEARANCE_KEY, id); } catch {}
+  }, []);
   const [enabledAgents, setEnabledAgents] = useState(
-    () => new Set([DEFAULT_AGENT_ID]),
+    () => new Set([...(loadEnabledAgents() || [DEFAULT_AGENT_ID])].slice(0, 3)),
   );
-  const [bridgeSelectedAgentId, setBridgeSelectedAgentId] = useState("");
+  const [activeAgentId, setActiveAgentId] = useState(() => [...enabledAgents][0] || DEFAULT_AGENT_ID);
+  const [bridgeSelectedAgentId, setBridgeSelectedAgentId] = useState(activeAgentId);
   const [agentOptions, setAgentOptions] = useState(() =>
     FIXED_AGENT_OPTIONS.map((agent) => ({ ...agent, detected: false })),
   );
@@ -279,11 +288,17 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
     };
     wifiRefresh.current = refreshWifi;
     void refreshWifi();
+    let disposeNavigation;
+    let disposed = false;
+    listen("lan-navigation-changed", () => { if (!disposed) void refreshWifi(true); })
+      .then(stop => { if (disposed) stop(); else disposeNavigation = stop; }).catch(() => {});
     const timer = setInterval(refreshWifi, WIFI_STATUS_POLL_MS);
     window.addEventListener(LAN_AGENT_PAIRING_UPDATED, onPairingChange);
     window.addEventListener("focus", refreshWifi);
     return () => {
       reconciler.dispose();
+      disposed = true;
+      disposeNavigation?.();
       wifiRefresh.current = null;
       clearInterval(timer);
       window.removeEventListener(LAN_AGENT_PAIRING_UPDATED, onPairingChange);
@@ -296,10 +311,7 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
     try {
       const records = await listAppearances({ force });
       setAppearances(records);
-      const map = loadAgentAppearanceMap(records);
-      setAgentAppearanceMap(map);
-      const enabled = loadEnabledAgents() || new Set([DEFAULT_AGENT_ID]);
-      setEnabledAgents(enabled);
+
       return records;
     } catch (err) {
       console.warn("[DeviceContext] listAppearances failed", err);
@@ -315,10 +327,22 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
   const loadBridgeSelection = useCallback(async () => {
     try {
       const profile = await invoke("load_bridge_profile");
-      setBridgeSelectedAgentId(profile?.selectedAgentId || profile?.enabledAgents?.[0] || "");
+      const selected = String(profile?.selectedAgentId || "").trim();
+      if (selected || profile?.enabledAgents?.length) setBridgeSelectedAgentId(selected || profile.enabledAgents[0]);
       const bridgeEnabled = bridgeEnabledAgents(profile);
       if (bridgeEnabled) {
         setEnabledAgents(bridgeEnabled);
+        setActiveAgentId((current) => (
+          selected && bridgeEnabled.has(selected)
+            ? selected
+            : bridgeEnabled.has(current)
+              ? current
+              : [...bridgeEnabled][0] || DEFAULT_AGENT_ID
+        ));
+        if (!readActiveAppearanceId()) {
+          const legacy = loadAgentAppearanceMap(await listAppearances());
+          confirmAppearance(legacy[selected || [...bridgeEnabled][0]] || BUILTIN_TERRIER_APPEARANCE_ID);
+        }
         saveEnabledAgents(bridgeEnabled);
       }
       return bridgeEnabled;
@@ -448,18 +472,26 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
   }, []);
 
   const currentDisplay = useMemo(() => {
-    const display = deriveCurrentDisplay(agentAppearanceMap, enabledAgents, appearances, agentOptions);
+    const display = deriveCurrentDisplay(
+      appearanceId || BUILTIN_TERRIER_APPEARANCE_ID,
+      enabledAgents,
+      appearances,
+      agentOptions,
+      activeAgentId,
+    );
     const verified = wifi && wifiAppearance?.boardDeviceId === wifi.boardDeviceId
       && wifiAppearance.bootId === wifi.bootId;
     if (verified) {
       const retained = appearances.find(record => record.id === wifiAppearance.appearanceId);
       if (retained) return { ...display, appearance: retained };
     }
-    return wifi?.appearanceCapacity ? { ...display, appearanceUnverified: true } : display;
-  }, [agentAppearanceMap, enabledAgents, appearances, agentOptions, wifi, wifiAppearance]);
+    return wifi?.appearanceCapacity
+      ? { ...display, appearanceUnverified: true }
+      : display;
+  }, [appearanceId, enabledAgents, appearances, agentOptions, activeAgentId, wifi, wifiAppearance]);
   const deviceConnected = usb.connected;
 
-  const applyWifiDesktopPet = useCallback(async (agentId, appearance, { follow = false } = {}) => {
+  const applyWifiDesktopPet = useCallback(async (appearance) => {
     if (!wifi?.appearanceCapacity) throw new Error("请更新设备固件后再通过 Wi-Fi 更换形象。");
     if (!wifi.controlTrusted) throw new Error("请通过 USB 连接同一台设备一次，授权无线控制后即可通过 Wi-Fi 更换形象。");
     if (!appearance?.id) throw new Error("请选择一个形象。");
@@ -467,7 +499,7 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
     const owner = { boardDeviceId: wifi.boardDeviceId, bootId: wifi.bootId,
       requestId: createDesktopPetIntentId(), cancelRequested: false };
     appearanceAssignmentOwnerRef.current = owner;
-    setAppearanceSync({ ...EMPTY_APPEARANCE_SYNC, pending: true, agentId,
+    setAppearanceSync({ ...EMPTY_APPEARANCE_SYNC, pending: true,
       appearanceId: appearance.id, appearanceName: appearance.name,
       transport: "wifi", progress: { text: "正在核对本机素材和设备形象槽位…", indeterminate: true } });
     let unlisten;
@@ -482,37 +514,15 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
       const outcome = await invoke("lan_sync_appearance", { appearanceId: appearance.id,
         boardDeviceId: owner.boardDeviceId, bootId: owner.bootId, requestId: owner.requestId });
       if (!["alreadyActive", "activated", "uploaded"].includes(outcome)) {
-        throw new Error("设备形象结果尚未确认，本次未切换 Agent。");
+        throw new Error("设备形象结果尚未确认。");
       }
       verified = true;
-      const nextMap = assignAppearanceToAgent(agentAppearanceMap, agentId, appearance.id);
       setWifiAppearance({ boardDeviceId: wifi.boardDeviceId, bootId: wifi.bootId, appearanceId: appearance.id });
-      if (owner.cancelRequested && follow) throw new Error("设备形象已确认，已取消后续的 Agent 跟随切换。");
-      if (follow) {
-        try {
-          await invoke("lan_follow_agent", { boardDeviceId: wifi.boardDeviceId, bootId: wifi.bootId, agentId });
-        } catch {
-          throw new Error("形象已更换，Agent 跟随结果尚未确认，请查看设备当前状态。");
-        }
-        const enabled = new Set([agentId]);
-        setEnabledAgents(enabled);
-        setBridgeSelectedAgentId(agentId);
-        saveEnabledAgents(enabled);
-      }
-      setAgentAppearanceMap(nextMap);
-      saveAgentAppearanceMap(nextMap);
-      if (follow) {
-        try {
-          const runtime = await invoke("ensure_bridge_runtime", { input: { forceRestart: true } });
-          if (runtime?.running !== true) throw new Error("本地桥接服务未就绪");
-        } catch {
-          throw new Error("Wi-Fi 形象和跟随已确认，但本地桥接服务未就绪。");
-        }
-      }
+      confirmAppearance(appearance.id);
       const notice = outcome === "alreadyActive" ? `已确认设备正在使用「${appearance.name}」`
         : outcome === "activated" ? `已切换至设备上的「${appearance.name}」`
           : `已通过 Wi-Fi 传输并激活「${appearance.name}」`;
-      return { nextMap, notice };
+      return { notice };
     } catch (error) {
       if (!verified) {
         setWifiAppearance(current => current?.boardDeviceId === owner.boardDeviceId ? null : current);
@@ -525,11 +535,11 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
         setAppearanceSync(EMPTY_APPEARANCE_SYNC);
       }
     }
-  }, [agentAppearanceMap, wifi]);
+  }, [confirmAppearance, wifi]);
 
   const applyDesktopPet = useCallback(
-    async (agentId, appearance, options = {}) => {
-      if (wifi) return applyWifiDesktopPet(agentId, appearance, { follow: agentId !== currentDisplay.agentId });
+    async (appearance, options = {}) => {
+      if (wifi) return applyWifiDesktopPet(appearance);
       if (appearanceAssignmentOwnerRef.current) throw new Error(FOLLOW_ASSIGNMENT_BUSY_MESSAGE);
       const { initialProgress, onProgress } = options;
       const syncToken = appearanceSyncTokenRef.current + 1;
@@ -550,7 +560,6 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
         && (!owner.connectionId || appearanceUsbRef.current.connectionId === owner.connectionId)
         && (!owner.bootId || appearanceUsbRef.current.bootId === owner.bootId);
       const appearanceSyncMeta = {
-        agentId,
         appearanceId: appearance?.id || "",
         appearanceName: appearance?.name || "",
       };
@@ -570,7 +579,7 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
           ...initialProgress,
           text: "正在确认…",
           stage: "confirming",
-          followOnly: true,
+          followOnly: false,
           indeterminate: true,
           percent: 0,
         });
@@ -586,28 +595,20 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
         owner.bootId = freshUsb.bootId;
         appearanceUsbRef.current = freshUsb;
         setUsb(freshUsb);
-        const { nextMap, notice } = await applyDesktopPetAssignment({
+        const { notice } = await applyDesktopPetAssignment({
           invoke,
           listen,
-          agentAppearanceMap,
-          agentId,
           appearance,
-          agentOptions,
           boardDeviceId: owner.boardDeviceId,
           currentAppearanceId,
           followIntentId: owner.intentId,
           onProgress: emitAppearanceSyncProgress,
           isCurrent,
         });
-        setAgentAppearanceMap(nextMap);
+        confirmAppearance(appearance.id);
         setWifiAppearance(null);
-        const enabled = new Set(assignedAgentIds(nextMap, agentId));
-        setEnabledAgents(enabled);
-        setBridgeSelectedAgentId(agentId);
-        saveAgentAppearanceMap(nextMap);
-        saveEnabledAgents(enabled);
         setAppearanceRecovery(current => current?.boardDeviceId === owner.boardDeviceId ? null : current);
-        return { nextMap, notice };
+        return { notice };
       } catch (error) {
         if (error?.code === "appearance-confirmation-required" || error?.message === APPEARANCE_SYNC_CANCELLED_MESSAGE) {
           setAppearanceRecovery({
@@ -616,15 +617,6 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
             checking: false,
             message: "暂时无法确认设备状态，本次未切换。请检查连接后再试。",
           });
-        }
-        // Profile persistence already completed in this explicitly reported
-        // partial outcome. Mirror it, while callers still show the bridge error.
-        const committed = error?.committedAssignment;
-        if (committed && appearanceAssignmentOwnerRef.current === owner) {
-          setAgentAppearanceMap(committed.nextMap);
-          setWifiAppearance(null);
-          setEnabledAgents(new Set(committed.enabledAgents));
-          setBridgeSelectedAgentId(committed.agentId);
         }
         throw error;
       } finally {
@@ -639,45 +631,106 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
         }
       }
     },
-    [agentAppearanceMap, agentOptions, applyWifiDesktopPet, binding, currentDisplay, onlineBoardDeviceId, usb.boardDeviceId, usb.connectionId, usb.bootId, wifi],
+    [confirmAppearance, applyWifiDesktopPet, binding, currentDisplay, onlineBoardDeviceId, usb.boardDeviceId, usb.connectionId, usb.bootId, wifi],
   );
 
-  const followAgent = useCallback(async (agentId, appearance, options) => {
-    if (usb.connected) return applyDesktopPet(agentId, appearance, options);
-    if (!wifi) throw new Error("请连接 USB，或先与当前设备完成 Wi-Fi 配对。");
-    if (wifi.appearanceCapacity) {
-      return applyWifiDesktopPet(agentId, appearance, { follow: true });
-    }
-    if (appearanceAssignmentOwnerRef.current) throw new Error(FOLLOW_ASSIGNMENT_BUSY_MESSAGE);
-    const owner = { boardDeviceId: wifi.boardDeviceId };
-    appearanceAssignmentOwnerRef.current = owner;
-    setAppearanceSync({ ...EMPTY_APPEARANCE_SYNC, pending: true, agentId,
-      progress: { text: "正在通过 Wi-Fi 提交跟随…", followOnly: true } });
-    try {
-      await invoke("lan_follow_agent", { ...wifi, agentId });
-      if (appearanceAssignmentOwnerRef.current !== owner) return {};
-      const enabled = new Set([agentId]);
+  // Serialize the session route and membership writes to the same profile.
+  // Compute each change after the previous write has finished.
+  const profileWrites = useRef(Promise.resolve());
+  const currentSources = useRef({ enabledAgents, activeAgentId });
+  useEffect(() => {
+    currentSources.current = { enabledAgents, activeAgentId };
+  }, [enabledAgents, activeAgentId]);
+
+  const pushToast = useOptionalToast()?.push;
+  const [dismissedBySource, setDismissedBySource] = useState({});
+  const sourceRoute = useRef();
+  sourceRoute.current = { dismissedBySource, usb, wifi, realtimeActive: realtimeChat.active };
+  const changeSources = useCallback((operation, id, intent) => {
+    const write = profileWrites.current.then(async () => {
+      const current = currentSources.current;
+      const { usb, wifi, realtimeActive } = sourceRoute.current;
+      const route = usb.connected ? usb : wifi;
+      if (intent && (route?.boardDeviceId !== intent.board || route?.bootId !== intent.boot
+          || intent.transport !== (usb.connected ? "usb" : "wifi")
+          || (usb.connected && intent.connection !== usb.connectionId))) return;
+      const next = updateFollowQueue(current, operation, id, intent);
+      if (next === current) return;
+      const { enabledAgents: enabled, activeAgentId: active } = next;
+      if (realtimeActive) throw new Error("请先结束实时对话，再调整跟随。");
+      if (active !== current.activeAgentId) {
+        const dismissScope = JSON.stringify([route?.boardDeviceId, active]);
+        const initialSessions = active === "workbuddy" && route
+          ? workbuddyFollowSnapshot(await fetchAgentSessions(active).catch(async () => {
+              const bridge = await invoke("ensure_bridge_runtime", { input: { forceRestart: false } });
+              if (!bridge?.running) throw new Error("会话服务尚未就绪，请稍后再切换。");
+              return fetchAgentSessions(active).catch(() => { throw new Error("暂时读不到 WorkBuddy 会话，请重试。"); });
+            }), sourceRoute.current.dismissedBySource[dismissScope])
+          : null;
+        if (usb.connected) {
+          const targetDeviceId = await invoke("get_or_create_desktop_device_id");
+          const profile = await invoke("load_bridge_profile");
+          const result = await invoke("dispatch_remote_cli_binding", { input: {
+            boardDeviceId: usb.boardDeviceId, expectedConnectionId: usb.connectionId,
+            expectedBootId: usb.bootId, targetDeviceId, targetSource: active,
+            initialSessions, previousSource: current.activeAgentId, mqttNamespace: profile?.mqttNamespace,
+          } });
+          if (!result?.usbSent || !result.ok) throw new Error(result?.error || "设备未确认跟随切换。");
+        } else if (wifi) {
+          await invoke("lan_follow_agent", { boardDeviceId: wifi.boardDeviceId, bootId: wifi.bootId, agentId: active, initialSessions, enabledAgents: [...enabled] });
+        }
+      }
+      if (active === current.activeAgentId || !wifi || usb.connected) {
+        await invoke("save_agent_selection", { input: { enabledAgents: [...enabled], selectedAgentId: active } });
+      }
+      currentSources.current = { enabledAgents: enabled, activeAgentId: active };
+      setActiveAgentId(active);
+      setBridgeSelectedAgentId(active);
       setEnabledAgents(enabled);
-      setBridgeSelectedAgentId(agentId);
       saveEnabledAgents(enabled);
-      if (currentDisplay.appearance?.id) {
-        setWifiAppearance({ boardDeviceId: wifi.boardDeviceId, bootId: wifi.bootId,
-          appearanceId: currentDisplay.appearance.id });
-      }
-      try {
-        const runtime = await invoke("ensure_bridge_runtime", { input: { forceRestart: true } });
-        if (runtime?.running !== true) throw new Error("本地桥接服务未就绪");
-      } catch {
-        throw new Error("Wi-Fi 跟随已提交，桌面配置已保存，但本地桥接服务未就绪。");
-      }
-      return { notice: "已通过 Wi-Fi 提交跟随，设备继续使用当前形象。" };
-    } finally {
-      if (appearanceAssignmentOwnerRef.current === owner) {
-        appearanceAssignmentOwnerRef.current = null;
-        setAppearanceSync(EMPTY_APPEARANCE_SYNC);
-      }
-    }
-  }, [applyDesktopPet, applyWifiDesktopPet, currentDisplay.appearance?.id, usb.connected, wifi]);
+      await ensureFollowQueueRuntime(operation, fetchAgentBusStatus, forceRestart =>
+        invoke("ensure_bridge_runtime", { input: { forceRestart } }));
+    });
+    profileWrites.current = write.catch(() => {});
+    return write;
+  }, []);
+
+  const lastNavigation = useRef({});
+  const navigate = useCallback((transport, board, boot, sequence, origin, direction, connection) => {
+    if (!board || !boot || !sequence || ![-1, 1].includes(direction)) return;
+    const last = lastNavigation.current[transport];
+    if (last?.board === board && last.boot === boot && last.sequence >= sequence) return;
+    lastNavigation.current[transport] = { board, boot, sequence };
+    changeSources("select", "", { board, boot, origin, direction, transport, connection }).catch(error => {
+      pushToast?.({ tone: "warning", title: "摇杆切换未完成", message: String(error?.message || error) });
+    });
+  }, [changeSources, pushToast]);
+  useEffect(() => {
+    let disposed = false;
+    let stop;
+    listen("usb-message", ({ payload: envelope }) => {
+      const row = envelope?.payload;
+      if (envelope?.topic !== "input/event" || row?.context !== "main" || !sourceRoute.current.usb.connected) return;
+      const origin = usbNavigationOrigin(row, sourceRoute.current.usb, currentSources.current.activeAgentId);
+      if (!origin) return;
+      navigate("usb", row.boardDeviceId, row.bootId, row.seq, origin,
+        row.action === "nav_left" ? -1 : row.action === "nav_right" ? 1 : 0, row._nativeUsbScope.connectionId);
+    }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; }).catch(() => {});
+    return () => { disposed = true; stop?.(); };
+  }, [navigate]);
+  useEffect(() => {
+    if (wifi) navigate("wifi", wifi.boardDeviceId, wifi.bootId, wifi.selectionSequence, wifi.selectionAgent, wifi.selectionDirection);
+  }, [wifi, navigate]);
+
+  const rememberAgent = useCallback(id => changeSources("select", id), [changeSources]);
+  const enableQueuedAgent = useCallback(async id => {
+    await changeSources("enable", id);
+    return { notice: `已启动 ${channelLabelForId(agentOptions, id)}` };
+  }, [agentOptions, changeSources]);
+  const removeQueuedAgent = useCallback(async id => {
+    await changeSources("remove", id);
+    return { notice: `已关闭 ${channelLabelForId(agentOptions, id)}` };
+  }, [agentOptions, changeSources]);
 
   const cancelAppearanceSync = useCallback(async () => {
     if (!appearanceSync.pending || appearanceSync.cancelling) {
@@ -707,12 +760,7 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
     }
   }, [appearanceSync.cancelling, appearanceSync.pending, appearanceSync.progress, appearanceSync.transport]);
 
-  const saveAgentAppearance = useCallback((agentId, appearanceId) => {
-    const nextMap = assignAppearanceToAgent(agentAppearanceMap, agentId, appearanceId);
-    setAgentAppearanceMap(nextMap);
-    saveAgentAppearanceMap(nextMap);
-    return nextMap;
-  }, [agentAppearanceMap]);
+
 
   const setBinding = useCallback(
     (next) => {
@@ -852,6 +900,7 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
     () => ({
       binding,
       setBinding,
+      dismissedBySource, setDismissedBySource,
       usb,
       wifi,
       wifiPairing,
@@ -865,8 +914,8 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
       onlineBoardDeviceId,
       deviceConnected,
       appearances,
-      agentAppearanceMap,
       enabledAgents,
+      activeAgentId,
       selectedAgentId: bridgeSelectedAgentId,
       agentOptions,
       agentScan,
@@ -881,9 +930,10 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
       startRealtimeChat,
       stopRealtimeChat,
       applyDesktopPet,
-      followAgent,
+      rememberAgent,
+      enableQueuedAgent,
+      removeQueuedAgent,
       cancelAppearanceSync,
-      saveAgentAppearance,
       rescanUsbDevices,
       recoverAppearanceSerial,
       getAppearanceSerialResetRequired,
@@ -894,6 +944,7 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
     [
       binding,
       setBinding,
+      dismissedBySource, setDismissedBySource,
       usb,
       wifi,
       wifiPairing,
@@ -907,8 +958,8 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
       onlineBoardDeviceId,
       deviceConnected,
       appearances,
-      agentAppearanceMap,
       enabledAgents,
+      activeAgentId,
       bridgeSelectedAgentId,
       agentOptions,
       agentScan,
@@ -922,9 +973,10 @@ export function DeviceContextProvider({ binding: bindingProp, onBindingChange, c
       startRealtimeChat,
       stopRealtimeChat,
       applyDesktopPet,
-      followAgent,
+      rememberAgent,
+      enableQueuedAgent,
+      removeQueuedAgent,
       cancelAppearanceSync,
-      saveAgentAppearance,
       rescanUsbDevices,
       recoverAppearanceSerial,
       getAppearanceSerialResetRequired,

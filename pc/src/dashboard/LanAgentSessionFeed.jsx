@@ -1,3 +1,4 @@
+import { useDeviceContext } from "../shell/DeviceContext.jsx";
 import { useEffect, useState } from "react";
 import { useAgentSessionFeed } from "./useAgentSessionFeed.js";
 import { useP4SessionSync } from "./useP4SessionSync.js";
@@ -6,6 +7,7 @@ import { LAN_AGENT_PAIRING_UPDATED, readLanAgentPairing } from "./lanAgentPairin
 const NO_DISMISSALS = Object.freeze({});
 
 export default function LanAgentSessionFeed({ agentId, usbConnected }) {
+  const { wifi } = useDeviceContext();
   const [paired, setPaired] = useState(false);
   useEffect(() => {
     let current = true;
@@ -30,7 +32,7 @@ export default function LanAgentSessionFeed({ agentId, usbConnected }) {
     dismissedSessions: NO_DISMISSALS,
   });
   useP4SessionSync({
-    enabled: false,
+    enabled: false, lanTarget: wifi, boardDeviceId: wifi?.boardDeviceId,
     agentId: followedAgent,
     usbConnected,
     displayEnabled: true,
