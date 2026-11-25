@@ -212,7 +212,7 @@ macOS 安装受阻时，先检查下载来源和校验值，再按系统“隐�
 
 ### 源码与发布对应关系
 
-[v0.1.265](https://github.com/ai-maker-lab/HachimoDock/tree/v0.1.265) 标签提供 0.1.265 / R313 的公开源码。安装包和固件的 SHA-256 见 [发布元数据](https://github.com/ai-maker-lab/HachimoDock/blob/v0.1.265/latest-release.json)。
+[v0.1.265](https://github.com/ai-maker-lab/HachimoDock/tree/v0.1.265) 标签提供 0.1.265 / R313 的公开源码。安装包和固件的 SHA-256 见 [发布元数据](latest-release.json)。
 
 资源保存在普通 Git 中，克隆不依赖 Git LFS。构建以锁定依赖和目标平台配置为准；不同发布包的源码对应关系以各 Release 说明为准。自行编译请查阅下列构建文档，并按实际板型选择配置。
 

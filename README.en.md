@@ -147,7 +147,7 @@ The paired hardware uses ESP32-P4, 32 MiB Flash, 32 MiB PSRAM and a 480×640 MIP
 
 ### Source and release provenance
 
-The [v0.1.265](https://github.com/ai-maker-lab/HachimoDock/tree/v0.1.265) tag provides the public 0.1.265 / R313 source. The [release metadata](https://github.com/ai-maker-lab/HachimoDock/blob/v0.1.265/latest-release.json) lists SHA-256 digests for installers and firmware.
+The [v0.1.265](https://github.com/ai-maker-lab/HachimoDock/tree/v0.1.265) tag provides the public 0.1.265 / R313 source. The [release metadata](latest-release.json) lists SHA-256 digests for installers and firmware.
 
 Resources are stored in ordinary Git; Git LFS is not required. Preserve dependency locks and choose the correct target configuration. Published binaries retain their original build contents even when `main` changes.
 
