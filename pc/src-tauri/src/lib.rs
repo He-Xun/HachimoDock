@@ -4054,7 +4054,7 @@ const BRIDGE_LAUNCH_AGENT_LABEL: &str = "com.petmanager.status-bridge";
 const BRIDGE_WINDOWS_STARTUP_SCRIPT_NAME: &str = "Pet Manager Status Bridge.cmd";
 const USB_STATE_MAX_AGE_MS: u64 = 10 * 60 * 1000;
 const USB_BRIDGE_SCAN_MAX_FILES: usize = 64;
-const KNOWN_USB_STATE_SOURCES: [&str; 8] = [
+const KNOWN_USB_STATE_SOURCES: [&str; 9] = [
     "claude-code",
     "codex",
     "openclaw",
@@ -4063,6 +4063,7 @@ const KNOWN_USB_STATE_SOURCES: [&str; 8] = [
     "workbuddy",
     "devin",
     "hermes",
+    "openchamber",
 ];
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
@@ -7914,6 +7915,30 @@ fn detect_hermes() -> DetectedAgent {
     }
 }
 
+fn detect_openchamber() -> DetectedAgent {
+    let home = get_home_dir().ok();
+    let config_dir = home.as_ref().map(|home| home.join(".config").join("openchamber"));
+    let opencode_dir = home.as_ref().map(|home| home.join(".config").join("opencode"));
+    let detected = config_dir.as_ref().is_some_and(|dir| dir.is_dir());
+    DetectedAgent {
+        id: "openchamber".into(),
+        label: "OpenChamber".into(),
+        detected,
+        ready: detected,
+        status: if detected { "ready" } else { "not_found" }.into(),
+        detail: if detected {
+            "通过 OpenCode 插件跟随 OpenChamber 的会话状态与气泡"
+        } else {
+            "尚未找到 OpenChamber 配置目录"
+        }
+        .into(),
+        command_path: String::new(),
+        config_path: opencode_dir.map(|path| path.to_string_lossy().into_owned()).unwrap_or_default(),
+        activity_path: config_dir.map(|path| path.to_string_lossy().into_owned()).unwrap_or_default(),
+        can_sync_hook: false,
+    }
+}
+
 fn detect_antigravity() -> DetectedAgent {
     let home = get_home_dir().ok();
     let brain = home.as_ref().map(|home| home.join(".gemini/antigravity/brain"));
@@ -7996,6 +8021,7 @@ fn detect_local_agents_inner(devin_cloud_enabled: bool) -> Result<AgentDiscovery
         detect_devin(devin_cloud_enabled),
         detect_hermes(),
         detect_antigravity(),
+        detect_openchamber(),
     ];
 
     Ok(AgentDiscoveryResponse {
@@ -11801,6 +11827,7 @@ fn usb_source_display_name(source: &str) -> String {
         "devin" | "devin-desktop" | "devin desktop" => "Devin".to_string(),
         "hermes" => "Hermes Agent".to_string(),
         "antigravity" => "Antigravity".to_string(),
+        "openchamber" => "OpenChamber".to_string(),
         other if !other.is_empty() => other.to_string(),
         _ => "桌宠".to_string(),
     }

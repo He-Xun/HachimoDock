@@ -23,6 +23,10 @@ function syncAllHooks(options = {}) {
       const { registerCodeBuddyHooks } = require("./codebuddy-install.js");
       return registerCodeBuddyHooks({ silent: true });
     });
+    run("openchamber", () => {
+      const { syncOpenChamberPlugin } = require("./openchamber-install.js");
+      return syncOpenChamberPlugin();
+    });
   }
   if (options.syncMiMoCode === true) {
     run("mimocode", () => {
