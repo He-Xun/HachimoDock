@@ -25,12 +25,19 @@ function finishOnce(payload) {
   const mapped = HOOK_MAP[hookName];
   if (!mapped) process.exit(0);
 
+  // Without a title the device falls back to the raw agent id ("kiro-cli").
   const body = {
     state: mapped.state,
     event: mapped.event,
     session_id: (payload && payload.session_id) || "default",
+    session_title: "Kiro",
+    session_title_explicit: false,
+    display_title: "Kiro",
     agent_id: "kiro-cli",
   };
+  if (mapped.state === "working" && payload && payload.tool_name) {
+    body.tool_name = String(payload.tool_name).slice(0, 100);
+  }
   if (payload && payload.cwd) body.cwd = payload.cwd;
   body.source_pid = process.ppid;
 

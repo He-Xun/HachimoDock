@@ -36,6 +36,8 @@ const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const STATUS_VALUES = new Set(["idle", "working", "speaking", "done", "reply_complete", "error", "waiting_user", "sleeping"]);
 const LEGACY_WORKING_STATUS_VALUES = new Set(["thinking", "tool_running"]);
 const KNOWN_AGENT_SOURCES = ["codex", "claude-code", "openclaw", "mimocode", "workbuddy", "devin", "deepseek-harness"];
+// Agents whose only status path is their own hook posting to /state.
+const HOOK_ONLY_AGENT_SOURCES = new Set(["kiro-cli"]);
 
 function requireOptional(name) {
   try {
@@ -1673,7 +1675,10 @@ function publishClawdState(config, payload) {
         ? buildWorkBuddyHookDisplay(payload, status, event)
         : source === "devin"
           ? buildDevinCloudDisplay(payload, status, event)
-          : undefined;
+          : HOOK_ONLY_AGENT_SOURCES.has(source) && payload?.display_title
+            // Same title/content rules as MiMoCode; the hook supplies the title.
+            ? buildMiMoCodeHookDisplay(payload, status, event)
+            : undefined;
   const explicitSessionTitle = compactHookText(payload.session_title, 160);
   const sessionTitle = explicitSessionTitle
     || (display && display.title)
@@ -2353,8 +2358,11 @@ async function main() {
     strictPort: config.http.strictPort,
     publisher,
     onState: (payload) => {
+      // Hook-only agents report through /state alone, so their states must not
+      // depend on the Claude hook-sync switch.
       if (config.http.syncHooks || config.mimocode.enabled || config.workbuddy.enabled
-          || normalizeAgentId(payload.agent_id) === "devin") {
+          || normalizeAgentId(payload.agent_id) === "devin"
+          || HOOK_ONLY_AGENT_SOURCES.has(normalizeAgentId(payload.agent_id))) {
         publishClawdState({
           publisher,
           metricsTracker,
