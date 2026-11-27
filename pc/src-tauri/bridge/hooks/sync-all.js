@@ -23,6 +23,10 @@ function syncAllHooks(options = {}) {
       const { registerCodeBuddyHooks } = require("./codebuddy-install.js");
       return registerCodeBuddyHooks({ silent: true });
     });
+    run("kiro-cli", () => {
+      const { registerKiroHooks } = require("./kiro-install.js");
+      return registerKiroHooks();
+    });
   }
   if (options.syncMiMoCode === true) {
     run("mimocode", () => {

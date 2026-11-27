@@ -4054,7 +4054,7 @@ const BRIDGE_LAUNCH_AGENT_LABEL: &str = "com.petmanager.status-bridge";
 const BRIDGE_WINDOWS_STARTUP_SCRIPT_NAME: &str = "Pet Manager Status Bridge.cmd";
 const USB_STATE_MAX_AGE_MS: u64 = 10 * 60 * 1000;
 const USB_BRIDGE_SCAN_MAX_FILES: usize = 64;
-const KNOWN_USB_STATE_SOURCES: [&str; 8] = [
+const KNOWN_USB_STATE_SOURCES: [&str; 9] = [
     "claude-code",
     "codex",
     "openclaw",
@@ -4063,6 +4063,7 @@ const KNOWN_USB_STATE_SOURCES: [&str; 8] = [
     "workbuddy",
     "devin",
     "hermes",
+    "kiro-cli",
 ];
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x08000000;
@@ -7914,6 +7915,43 @@ fn detect_hermes() -> DetectedAgent {
     }
 }
 
+fn path_has_executable(names: &[&str]) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+        .find(|candidate| candidate.is_file())
+}
+
+fn detect_kiro() -> DetectedAgent {
+    let home = get_home_dir().ok();
+    let config_dir = home.as_ref().map(|home| home.join(".kiro"));
+    let names: &[&str] = if cfg!(windows) {
+        &["kiro-cli.exe", "kiro-cli.cmd"]
+    } else {
+        &["kiro-cli"]
+    };
+    let cli = path_has_executable(names);
+    let has_config = config_dir.as_ref().is_some_and(|dir| dir.join("agents").is_dir());
+    let detected = cli.is_some() || has_config;
+    DetectedAgent {
+        id: "kiro-cli".into(),
+        label: "Kiro / Kiro Crew".into(),
+        detected,
+        ready: detected,
+        status: if detected { "ready" } else { "not_found" }.into(),
+        detail: if detected {
+            "通过 Kiro CLI 钩子跟随 Kiro 与 Kiro Crew 的会话状态"
+        } else {
+            "尚未找到 Kiro CLI"
+        }
+        .into(),
+        command_path: cli.map(|path| path.to_string_lossy().into_owned()).unwrap_or_default(),
+        config_path: config_dir.map(|path| path.to_string_lossy().into_owned()).unwrap_or_default(),
+        activity_path: String::new(),
+        can_sync_hook: false,
+    }
+}
+
 fn detect_antigravity() -> DetectedAgent {
     let home = get_home_dir().ok();
     let brain = home.as_ref().map(|home| home.join(".gemini/antigravity/brain"));
@@ -7996,6 +8034,7 @@ fn detect_local_agents_inner(devin_cloud_enabled: bool) -> Result<AgentDiscovery
         detect_devin(devin_cloud_enabled),
         detect_hermes(),
         detect_antigravity(),
+        detect_kiro(),
     ];
 
     Ok(AgentDiscoveryResponse {
@@ -11801,6 +11840,7 @@ fn usb_source_display_name(source: &str) -> String {
         "devin" | "devin-desktop" | "devin desktop" => "Devin".to_string(),
         "hermes" => "Hermes Agent".to_string(),
         "antigravity" => "Antigravity".to_string(),
+        "kiro-cli" | "kiro" | "kirocrew" | "kiro-crew" => "Kiro".to_string(),
         other if !other.is_empty() => other.to_string(),
         _ => "桌宠".to_string(),
     }

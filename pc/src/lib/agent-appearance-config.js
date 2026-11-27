@@ -57,6 +57,11 @@ export const FIXED_AGENT_OPTIONS = [
     label: "Devin",
     detail: "Devin 云端会话状态与气泡；向 Devin Desktop 当前对话追加语音草稿",
   },
+  {
+    id: "kiro-cli",
+    label: "Kiro / Kiro Crew",
+    detail: "通过 Kiro CLI 钩子跟随 Kiro 与 Kiro Crew 的会话状态",
+  },
 ];
 
 export function loadEnabledAgents() {
